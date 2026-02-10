@@ -75,7 +75,7 @@ export default function LoginPage() {
               Sistema de Gestão de Frota
             </h1>
             <p className="text-white/80 text-lg leading-relaxed">
-              Controle completo de veículos, colaboradores e operações logísticas da sua empresa.
+              Controle completo de veículos, colaboradores e operações logísticas.
             </p>
 
             {/* Features */}
