@@ -1,0 +1,3 @@
+git add .
+git commit -m "Adiciona checklist com imagens no colaborador"
+git push
