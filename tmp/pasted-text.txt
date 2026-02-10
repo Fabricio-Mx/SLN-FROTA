@@ -1,0 +1,10 @@
+não estou conseguindo logar como admin no programa, preciso que identifique o problema e arrume para que eu consiga logar e ver o painel a qual já criamos anteriormente, preciso que registre no banco de dados do Supabase o login como admin já cadastrado, login: admin, senha: admin1234
+
+Preciso que esse acesso funcione para poder conseguir ver a outra página da gestão de frota e ver como ficou após as novas atualizações
+
+Verifique se possui erros e se sim, corrija todos e deixe o programa funcional de forma que eu consiga logar como o Master que e o admin
+
+abaixo possui alguns erros que o console mostrou ao tentar logar também:
+16:00:20.682Z	[SERVER]	GoTrueClient@sb-wylfawzjnkhdqfrqwqbj-auth-token:1 (2.95.3) 2026-02-06T19:00:20.681Z Multiple GoTrueClient instances detected in the same browser context. It is not an error, but this should be avoided as it may produce undefined behavior when used concurrently under the same storage key.
+16:00:22.767Z	[SERVER]	GoTrueClient@sb-wylfawzjnkhdqfrqwqbj-auth-token:2 (2.95.3) 2026-02-06T19:00:22.767Z Multiple GoTrueClient instances detected in the same browser context. It is not an error, but this should be avoided as it may produce undefined behavior when used concurrently under the same storage key.
+16:02:26.675Z	[SERVER]	GoTrueClient@sb-wylfawzjnkhdqfrqwqbj-auth-token:1 (2.95.3) 2026-02-06T19:02:26.675Z Multiple GoTrueClient instances detected in the same browser context. It is not an error, but this should be avoided as it may produce undefined behavior when used concurrently under the same storage key.
