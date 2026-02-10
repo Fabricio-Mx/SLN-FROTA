@@ -47,6 +47,7 @@
     "date-fns": "4.1.0",
     "docxtemplater": "^3.67.6",
     "embla-carousel-react": "8.5.1",
+    "googleapis": "^140.0.0",
     "input-otp": "1.4.1",
     "libreoffice-convert": "^1.8.1",
     "lucide-react": "^0.454.0",

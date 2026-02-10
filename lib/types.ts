@@ -29,6 +29,8 @@ export interface Vehicle {
   cpfAgregado?: string | null
   dataVencimentoCNHAgregado?: string | null
   colaboradorId?: string | null
+  imagens?: DriveFile[]
+  checklists?: DriveFile[]
   createdAt: string
   updatedAt: string
 }
@@ -42,8 +44,32 @@ export interface Colaborador {
   telefone: string
   departamento: string
   dataVencimentoCNH: string
+  documentos?: DriveFile[]
+  checklist?: ColaboradorChecklist
   createdAt: string
   updatedAt: string
+}
+
+export interface DriveFile {
+  id: string
+  name: string
+  webViewLink?: string | null
+  webContentLink?: string | null
+  mimeType?: string | null
+  size?: string | null
+}
+
+export interface ColaboradorChecklist {
+  frontal?: DriveFile
+  direita?: DriveFile
+  esquerda?: DriveFile
+  traseira?: DriveFile
+  avarias?: ColaboradorAvaria[]
+}
+
+export interface ColaboradorAvaria {
+  file: DriveFile
+  descricao: string
 }
 
 export type ColaboradorFormData = Omit<Colaborador, 'id' | 'createdAt' | 'updatedAt'>

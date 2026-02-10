@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { toast } from "@/hooks/use-toast"
 import type { Vehicle, VehicleFormData } from "@/lib/types"
 
 interface VehicleModalProps {
@@ -47,6 +48,8 @@ const initialFormData: VehicleFormData = {
   semParar: false,
   tipoContratacao: null,
   colaboradorId: null,
+  imagens: [],
+  checklists: [],
 }
 
 export function VehicleModal({
@@ -57,6 +60,8 @@ export function VehicleModal({
 }: VehicleModalProps) {
   const [formData, setFormData] = useState<VehicleFormData>(initialFormData)
   const [errors, setErrors] = useState<Partial<Record<keyof VehicleFormData, string>>>({})
+  const [uploadingImages, setUploadingImages] = useState(false)
+  const [uploadingChecklists, setUploadingChecklists] = useState(false)
 
   useEffect(() => {
     if (vehicle) {
@@ -76,12 +81,69 @@ export function VehicleModal({
         semParar: vehicle.semParar ?? false,
         tipoContratacao: vehicle.tipoContratacao || null,
         colaboradorId: vehicle.colaboradorId || null,
+        imagens: vehicle.imagens || [],
+        checklists: vehicle.checklists || [],
       })
     } else {
       setFormData(initialFormData)
     }
     setErrors({})
   }, [vehicle, open])
+
+  const imagens = formData.imagens || []
+  const checklists = formData.checklists || []
+
+  const handleUpload = async (files: FileList | null, kind: "imagens" | "checklists") => {
+    if (!files || files.length === 0) return
+    if (!formData.placa.trim()) {
+      toast({
+        title: "Aviso",
+        description: "Informe a placa antes de enviar arquivos.",
+      })
+      return
+    }
+
+    const setUploading = kind === "imagens" ? setUploadingImages : setUploadingChecklists
+    const currentList = kind === "imagens" ? imagens : checklists
+
+    setUploading(true)
+    try {
+      const uploaded = [...currentList]
+
+      for (const file of Array.from(files)) {
+        const body = new FormData()
+        body.append("file", file)
+        body.append("entityType", "veiculos")
+        body.append("entityId", (formData.placa || "sem-placa").toUpperCase())
+        body.append("label", kind)
+
+        const res = await fetch("/api/drive/upload", {
+          method: "POST",
+          body,
+        })
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data?.error || "Falha ao enviar arquivo.")
+        }
+
+        const data = await res.json()
+        uploaded.push(data)
+      }
+
+      if (kind === "imagens") {
+        setFormData({ ...formData, imagens: uploaded })
+      } else {
+        setFormData({ ...formData, checklists: uploaded })
+      }
+      toast({ title: "Sucesso", description: "Arquivos enviados para o Drive." })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Falha ao enviar arquivo."
+      toast({ title: "Erro", description: message, variant: "destructive" })
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const validateForm = (): boolean => {
     const newErrors: Partial<Record<keyof VehicleFormData, string>> = {}
@@ -237,6 +299,64 @@ export function VehicleModal({
                   {errors.dataVencimentoContrato}
                 </p>
               )}
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="imagens">Imagens do Veiculo</Label>
+              <Input
+                id="imagens"
+                type="file"
+                multiple
+                accept="image/*"
+                onChange={(e) => handleUpload(e.target.files, "imagens")}
+                disabled={uploadingImages}
+              />
+              {imagens.length > 0 && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {imagens.map((img) => (
+                    <a
+                      key={img.id}
+                      href={img.webViewLink || "#"}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded bg-muted px-2 py-1 text-muted-foreground hover:text-foreground"
+                    >
+                      {img.name}
+                    </a>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {uploadingImages ? "Enviando imagens..." : "Arquivos vao para o Drive da empresa."}
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="checklists">Checklist do Veiculo</Label>
+              <Input
+                id="checklists"
+                type="file"
+                multiple
+                accept=".pdf,image/*"
+                onChange={(e) => handleUpload(e.target.files, "checklists")}
+                disabled={uploadingChecklists}
+              />
+              {checklists.length > 0 && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {checklists.map((item) => (
+                    <a
+                      key={item.id}
+                      href={item.webViewLink || "#"}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded bg-muted px-2 py-1 text-muted-foreground hover:text-foreground"
+                    >
+                      {item.name}
+                    </a>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {uploadingChecklists ? "Enviando checklists..." : "Arquivos vao para o Drive da empresa."}
+              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="tipoPropriedade">Tipo de Propriedade</Label>
