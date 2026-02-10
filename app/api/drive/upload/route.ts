@@ -8,6 +8,12 @@ const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
 const DRIVE_CLIENT_EMAIL = process.env.GOOGLE_DRIVE_CLIENT_EMAIL
 const DRIVE_PRIVATE_KEY = process.env.GOOGLE_DRIVE_PRIVATE_KEY
 
+function normalizePrivateKey(value: string) {
+  const trimmed = value.trim()
+  const withoutQuotes = trimmed.replace(/^"|"$/g, "").replace(/^'|'$/g, "")
+  return withoutQuotes.replace(/\\n/g, "\n").replace(/\r\n/g, "\n")
+}
+
 function getDriveClient() {
   if (!DRIVE_FOLDER_ID || !DRIVE_CLIENT_EMAIL || !DRIVE_PRIVATE_KEY) {
     throw new Error("Drive env vars nao configuradas.")
@@ -15,7 +21,7 @@ function getDriveClient() {
 
   const auth = new google.auth.JWT({
     email: DRIVE_CLIENT_EMAIL,
-    key: DRIVE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    key: normalizePrivateKey(DRIVE_PRIVATE_KEY),
     scopes: ["https://www.googleapis.com/auth/drive"],
   })
 
