@@ -54,7 +54,7 @@ export function AssignModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[420px]">
+      <DialogContent className="sm:max-w-[420px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Atribuir Veículo ao Colaborador</DialogTitle>
           <DialogDescription>

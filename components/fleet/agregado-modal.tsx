@@ -141,7 +141,7 @@ export function AgregadoModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[420px]">
+      <DialogContent className="sm:max-w-[420px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {vehicle ? "Editar Veículo Agregado" : "Adicionar Veículo Agregado"}
