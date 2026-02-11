@@ -1,29 +1,54 @@
 import { NextResponse } from "next/server"
 import { Readable } from "node:stream"
 import { google } from "googleapis"
+import { createAdminClient } from "@/lib/supabase/admin"
 
 export const runtime = "nodejs"
 
 const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
-const DRIVE_CLIENT_EMAIL = process.env.GOOGLE_DRIVE_CLIENT_EMAIL
-const DRIVE_PRIVATE_KEY = process.env.GOOGLE_DRIVE_PRIVATE_KEY
+const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
+const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
+const GOOGLE_OAUTH_REDIRECT_URL = process.env.GOOGLE_OAUTH_REDIRECT_URL
 
-function normalizePrivateKey(value: string) {
-  const trimmed = value.trim()
-  const withoutQuotes = trimmed.replace(/^"|"$/g, "").replace(/^'|'$/g, "")
-  return withoutQuotes.replace(/\\n/g, "\n").replace(/\r\n/g, "\n")
-}
-
-function getDriveClient() {
-  if (!DRIVE_FOLDER_ID || !DRIVE_CLIENT_EMAIL || !DRIVE_PRIVATE_KEY) {
-    throw new Error("Drive env vars nao configuradas.")
+function getOAuthClient() {
+  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !GOOGLE_OAUTH_REDIRECT_URL) {
+    throw new Error("Google OAuth nao configurado.")
   }
 
-  const auth = new google.auth.JWT({
-    email: DRIVE_CLIENT_EMAIL,
-    key: normalizePrivateKey(DRIVE_PRIVATE_KEY),
-    scopes: ["https://www.googleapis.com/auth/drive"],
-  })
+  return new google.auth.OAuth2(
+    GOOGLE_OAUTH_CLIENT_ID,
+    GOOGLE_OAUTH_CLIENT_SECRET,
+    GOOGLE_OAUTH_REDIRECT_URL
+  )
+}
+
+async function getStoredRefreshToken() {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from("drive_tokens")
+    .select("refresh_token")
+    .eq("id", "default")
+    .maybeSingle()
+
+  if (error) {
+    throw new Error("Falha ao carregar token do Drive.")
+  }
+
+  return data?.refresh_token || null
+}
+
+async function getDriveClient() {
+  if (!DRIVE_FOLDER_ID) {
+    throw new Error("Drive folder id nao configurado.")
+  }
+
+  const refreshToken = await getStoredRefreshToken()
+  if (!refreshToken) {
+    throw new Error("Drive nao autorizado. Acesse /api/drive/oauth/start.")
+  }
+
+  const auth = getOAuthClient()
+  auth.setCredentials({ refresh_token: refreshToken })
 
   return google.drive({ version: "v3", auth })
 }
