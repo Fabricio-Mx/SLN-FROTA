@@ -92,7 +92,7 @@ function sanitizeName(value: string) {
 
 export async function POST(req: Request) {
   try {
-    const drive = getDriveClient()
+    const drive = await getDriveClient()
     const formData = await req.formData()
 
     const file = formData.get("file") as File | null
