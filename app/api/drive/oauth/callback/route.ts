@@ -34,7 +34,11 @@ export async function GET(req: Request) {
   const cookieStore = await cookies()
   const storedState = cookieStore.get("drive_oauth_state")?.value
 
-  if (!code || !state || !storedState || state !== storedState) {
+  if (!code || !state) {
+    return NextResponse.json({ error: "Codigo OAuth ausente." }, { status: 400 })
+  }
+
+  if (storedState && state !== storedState) {
     return NextResponse.json({ error: "Estado OAuth invalido." }, { status: 400 })
   }
 

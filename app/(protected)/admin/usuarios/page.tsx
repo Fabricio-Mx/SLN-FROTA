@@ -94,6 +94,12 @@ export default function AdminUsuariosPage() {
     checkAccessAndLoad()
   }, [])
 
+  const formatApiError = (data: { error?: string; hint?: string } | null) => {
+    if (!data) return "Erro ao carregar."
+    if (data.hint) return `${data.error || "Erro"}. ${data.hint}`
+    return data.error || "Erro ao carregar."
+  }
+
   const checkAccessAndLoad = async () => {
     try {
       // Verificar se é mestre
@@ -114,9 +120,19 @@ export default function AdminUsuariosPage() {
 
       // Carregar usuários
       const usersRes = await fetch("/api/auth/users")
-      const usersData = await usersRes.json()
-      
-      if (usersData.users) {
+      const usersData = await usersRes.json().catch(() => null)
+
+      if (!usersRes.ok) {
+        toast({
+          title: "Erro",
+          description: formatApiError(usersData),
+          variant: "destructive",
+        })
+        setProfiles([])
+        return
+      }
+
+      if (usersData?.users) {
         setProfiles(usersData.users)
       }
     } catch {
@@ -148,10 +164,10 @@ export default function AdminUsuariosPage() {
         body: JSON.stringify(newUser),
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => null)
 
       if (!res.ok) {
-        toast({ title: "Erro", description: data.error, variant: "destructive" })
+        toast({ title: "Erro", description: formatApiError(data), variant: "destructive" })
         return
       }
 
@@ -256,7 +272,7 @@ export default function AdminUsuariosPage() {
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
         {/* Legenda dos tipos */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {(["consulta", "administrativo", "logistico"] as UserRole[]).map((role) => {
+          {(["mestre", "consulta", "administrativo", "logistico"] as UserRole[]).map((role) => {
             const style = ROLE_STYLES[role]
             return (
               <div key={role} className="bg-card border border-border rounded-lg p-4 flex items-start gap-3">
@@ -324,7 +340,7 @@ export default function AdminUsuariosPage() {
                               </SelectValue>
                             </SelectTrigger>
                             <SelectContent>
-                              {(["consulta", "administrativo", "logistico"] as UserRole[]).map(
+                              {(["mestre", "consulta", "administrativo", "logistico"] as UserRole[]).map(
                                 (r) => (
                                   <SelectItem key={r} value={r}>
                                     <div className="flex items-center gap-2">
@@ -423,7 +439,7 @@ export default function AdminUsuariosPage() {
                   <SelectValue className="block max-w-full truncate" placeholder="Selecione o tipo de acesso" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(["consulta", "administrativo", "logistico"] as UserRole[]).map((r) => (
+                  {(["mestre", "consulta", "administrativo", "logistico"] as UserRole[]).map((r) => (
                     <SelectItem key={r} value={r}>
                       <div className="flex items-center gap-2">
                         {ROLE_STYLES[r].icon}

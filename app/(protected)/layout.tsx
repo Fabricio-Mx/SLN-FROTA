@@ -1,6 +1,9 @@
 import React from "react"
 import { redirect } from "next/navigation"
 import { cookies } from "next/headers"
+import { IdleLogout } from "@/components/idle-logout"
+import { SupabaseHealthBanner } from "@/components/supabase-health-banner"
+import { BackupScheduler } from "@/components/backup-scheduler"
 
 export default async function ProtectedLayout({
   children,
@@ -14,5 +17,12 @@ export default async function ProtectedLayout({
     redirect("/auth/login")
   }
 
-  return <>{children}</>
+  return (
+    <>
+      <SupabaseHealthBanner />
+      <IdleLogout />
+      <BackupScheduler />
+      {children}
+    </>
+  )
 }

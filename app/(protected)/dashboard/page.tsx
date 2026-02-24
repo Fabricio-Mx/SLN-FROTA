@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { Plus, Users, Car, Truck } from "lucide-react"
+import { Plus, Users, Car, Truck, Fuel } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import type { AppUser, UserRole } from "@/lib/types"
 import { canAddVehicles } from "@/lib/auth-shared"
@@ -20,6 +20,10 @@ import { ColaboradoresTable } from "@/components/fleet/colaboradores-table"
 import { ColaboradoresFilters, type ColaboradorFilters } from "@/components/fleet/colaboradores-filters"
 import { ColaboradorModal } from "@/components/fleet/colaborador-modal"
 import { AssignModal } from "@/components/fleet/assign-modal"
+import { FuelSummary } from "@/components/fuel/fuel-summary"
+import { FuelChartsPlaceholder } from "@/components/fuel/fuel-charts-placeholder"
+import { FuelImportPanel } from "@/components/fuel/fuel-import-panel"
+import { FuelTransactionsTable } from "@/components/fuel/fuel-transactions-table"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -211,13 +215,21 @@ export default function FleetPage() {
     setIsVehicleModalOpen(true)
   }
 
-  const handleSaveVehicle = (data: VehicleFormData) => {
-    if (editingVehicle) {
-      updateVehicle(editingVehicle.id, data)
-      toast({ title: "Sucesso", description: "Veículo atualizado com sucesso!" })
-    } else {
-      addVehicle({ ...data, frota: true }) // Veículos frota sempre tem frota = true
-      toast({ title: "Sucesso", description: "Veículo adicionado com sucesso!" })
+  const handleSaveVehicle = async (data: VehicleFormData) => {
+    try {
+      if (editingVehicle) {
+        await updateVehicle(editingVehicle.id, data)
+        toast({ title: "Sucesso", description: "Veículo atualizado com sucesso!" })
+      } else {
+        await addVehicle({ ...data, frota: true }) // Veículos frota sempre tem frota = true
+        toast({ title: "Sucesso", description: "Veículo adicionado com sucesso!" })
+      }
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao salvar veículo.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -232,13 +244,21 @@ export default function FleetPage() {
     setIsAgregadoModalOpen(true)
   }
 
-  const handleSaveAgregado = (data: VehicleFormData) => {
-    if (editingAgregado) {
-      updateVehicle(editingAgregado.id, { ...data, frota: false })
-      toast({ title: "Sucesso", description: "Veículo agregado atualizado com sucesso!" })
-    } else {
-      addVehicle({ ...data, frota: false }) // Veículos agregados sempre tem frota = false
-      toast({ title: "Sucesso", description: "Veículo agregado adicionado com sucesso!" })
+  const handleSaveAgregado = async (data: VehicleFormData) => {
+    try {
+      if (editingAgregado) {
+        await updateVehicle(editingAgregado.id, { ...data, frota: false })
+        toast({ title: "Sucesso", description: "Veículo agregado atualizado com sucesso!" })
+      } else {
+        await addVehicle({ ...data, frota: false }) // Veículos agregados sempre tem frota = false
+        toast({ title: "Sucesso", description: "Veículo agregado adicionado com sucesso!" })
+      }
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao salvar veículo agregado.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -250,12 +270,19 @@ export default function FleetPage() {
     }
   }
 
-  const handleConfirmDeleteVehicle = () => {
-    if (deletingVehicle) {
-      deleteVehicle(deletingVehicle.id)
+  const handleConfirmDeleteVehicle = async () => {
+    if (!deletingVehicle) return
+    try {
+      await deleteVehicle(deletingVehicle.id)
       toast({ title: "Sucesso", description: "Veículo excluído com sucesso!" })
       setIsDeleteVehicleDialogOpen(false)
       setDeletingVehicle(null)
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao excluir veículo.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -270,34 +297,41 @@ export default function FleetPage() {
     setIsColaboradorModalOpen(true)
   }
 
-  const handleSaveColaborador = (data: ColaboradorFormData, veiculoId?: string | null, veiculoKm?: number | null) => {
-    let colaboradorId: string
+  const handleSaveColaborador = async (data: ColaboradorFormData, veiculoId?: string | null, veiculoKm?: number | null) => {
+    try {
+      let colaboradorId: string
 
-    if (editingColaborador) {
-      updateColaborador(editingColaborador.id, data)
-      colaboradorId = editingColaborador.id
-      
-      // Remover atribuição de veículos antigos deste colaborador
-      vehicles.forEach((v) => {
-        if (v.colaboradorId === colaboradorId && v.id !== veiculoId) {
-          updateVehicle(v.id, { ...v, colaboradorId: null })
+      if (editingColaborador) {
+        await updateColaborador(editingColaborador.id, data)
+        colaboradorId = editingColaborador.id
+
+        const vehiclesToUnassign = vehicles.filter((v) => v.colaboradorId === colaboradorId && v.id !== veiculoId)
+        if (vehiclesToUnassign.length > 0) {
+          await Promise.all(
+            vehiclesToUnassign.map((v) => updateVehicle(v.id, { ...v, colaboradorId: null }))
+          )
         }
-      })
-      
-      toast({ title: "Sucesso", description: "Colaborador atualizado com sucesso!" })
-    } else {
-      const newColaborador = addColaborador(data)
-      colaboradorId = newColaborador.id
-      toast({ title: "Sucesso", description: "Colaborador adicionado com sucesso!" })
-    }
 
-    // Atribuir novo veículo ao colaborador
-    if (veiculoId) {
-      const vehicle = vehicles.find((v) => v.id === veiculoId)
-      if (vehicle) {
-        const kmToSave = typeof veiculoKm === "number" ? veiculoKm : vehicle.km
-        updateVehicle(veiculoId, { ...vehicle, colaboradorId, km: kmToSave })
+        toast({ title: "Sucesso", description: "Colaborador atualizado com sucesso!" })
+      } else {
+        const newColaborador = await addColaborador(data)
+        colaboradorId = newColaborador.id
+        toast({ title: "Sucesso", description: "Colaborador adicionado com sucesso!" })
       }
+
+      if (veiculoId) {
+        const vehicle = vehicles.find((v) => v.id === veiculoId)
+        if (vehicle) {
+          const kmToSave = typeof veiculoKm === "number" ? veiculoKm : vehicle.km
+          await updateVehicle(veiculoId, { ...vehicle, colaboradorId, km: kmToSave })
+        }
+      }
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao salvar colaborador.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -309,12 +343,19 @@ export default function FleetPage() {
     }
   }
 
-  const handleConfirmDeleteColaborador = () => {
-    if (deletingColaborador) {
-      deleteColaborador(deletingColaborador.id)
+  const handleConfirmDeleteColaborador = async () => {
+    if (!deletingColaborador) return
+    try {
+      await deleteColaborador(deletingColaborador.id)
       toast({ title: "Sucesso", description: "Colaborador excluído com sucesso!" })
       setIsDeleteColaboradorDialogOpen(false)
       setDeletingColaborador(null)
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao excluir colaborador.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -329,19 +370,34 @@ export default function FleetPage() {
     setIsUnassignDialogOpen(true)
   }
 
-  const handleConfirmUnassignVehicle = () => {
+  const handleConfirmUnassignVehicle = async () => {
     if (!unassigningVehicle) return
-    updateVehicle(unassigningVehicle.id, { ...unassigningVehicle, colaboradorId: null })
-    toast({ title: "Sucesso", description: "Veículo desvinculado do colaborador!" })
-    setIsUnassignDialogOpen(false)
-    setUnassigningVehicle(null)
+    try {
+      await updateVehicle(unassigningVehicle.id, { ...unassigningVehicle, colaboradorId: null })
+      toast({ title: "Sucesso", description: "Veículo desvinculado do colaborador!" })
+      setIsUnassignDialogOpen(false)
+      setUnassigningVehicle(null)
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao remover colaborador.",
+        variant: "destructive",
+      })
+    }
   }
 
-  const handleConfirmAssign = (vehicleId: string, colaboradorId: string) => {
+  const handleConfirmAssign = async (vehicleId: string, colaboradorId: string) => {
     const vehicle = vehicles.find((v) => v.id === vehicleId)
-    if (vehicle) {
-      updateVehicle(vehicleId, { ...vehicle, colaboradorId })
+    if (!vehicle) return
+    try {
+      await updateVehicle(vehicleId, { ...vehicle, colaboradorId })
       toast({ title: "Sucesso", description: "Veículo atribuído ao colaborador!" })
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao atribuir colaborador.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -352,29 +408,50 @@ export default function FleetPage() {
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="space-y-6">
           <StatsCards vehicles={vehicles} colaboradores={colaboradores} />
-          
+
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <TabsList>
-                <TabsTrigger value="veiculos" className="gap-2">
+              <TabsList className="bg-muted/70 border border-border shadow-sm">
+                <TabsTrigger
+                  value="veiculos"
+                  className="gap-2 data-[state=active]:bg-[#7CB342] data-[state=active]:text-white data-[state=active]:shadow text-muted-foreground"
+                >
                   <Car className="h-4 w-4" />
                   Veículos Frota
                 </TabsTrigger>
-                <TabsTrigger value="agregados" className="gap-2">
+                <TabsTrigger
+                  value="agregados"
+                  className="gap-2 data-[state=active]:bg-[#7CB342] data-[state=active]:text-white data-[state=active]:shadow text-muted-foreground"
+                >
                   <Truck className="h-4 w-4" />
                   Veículos Agregados
                 </TabsTrigger>
-                <TabsTrigger value="colaboradores" className="gap-2">
+                <TabsTrigger
+                  value="colaboradores"
+                  className="gap-2 data-[state=active]:bg-[#7CB342] data-[state=active]:text-white data-[state=active]:shadow text-muted-foreground"
+                >
                   <Users className="h-4 w-4" />
                   Colaboradores
                 </TabsTrigger>
+                <TabsTrigger
+                  value="combustivel"
+                  className="gap-2 data-[state=active]:bg-[#7CB342] data-[state=active]:text-white data-[state=active]:shadow text-muted-foreground"
+                >
+                  <Fuel className="h-4 w-4" />
+                  Combustível
+                </TabsTrigger>
               </TabsList>
-              
+
               {canAddVehicles(userRole) && (
                 activeTab === "colaboradores" ? (
                   <Button onClick={handleAddColaborador} className="gap-2">
                     <Plus className="h-4 w-4" />
                     Adicionar Colaborador
+                  </Button>
+                ) : activeTab === "combustivel" ? (
+                  <Button onClick={() => setActiveTab("combustivel")} className="gap-2" variant="secondary">
+                    <Plus className="h-4 w-4" />
+                    Novo Relatório
                   </Button>
                 ) : activeTab === "agregados" ? (
                   <Button onClick={handleAddAgregado} className="gap-2">
@@ -424,6 +501,13 @@ export default function FleetPage() {
                 onEdit={handleEditColaborador}
                 onDelete={handleDeleteColaboradorClick}
               />
+            </TabsContent>
+
+            <TabsContent value="combustivel" className="mt-6 space-y-4">
+              <FuelSummary />
+              <FuelImportPanel />
+              <FuelTransactionsTable />
+              <FuelChartsPlaceholder />
             </TabsContent>
           </Tabs>
         </div>

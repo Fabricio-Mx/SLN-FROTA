@@ -1,8 +1,16 @@
 "use client"
 
-import { Car, Key, CreditCard, AlertTriangle, Users, Wrench, Settings } from "lucide-react"
+import { Car, Key, CreditCard, AlertTriangle, Users, Wrench, Settings, Fuel } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import type { Vehicle, Colaborador } from "@/lib/types"
+import { useFuelData } from "@/hooks/use-fuel-data"
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(value)
+}
 
 interface StatsCardsProps {
   vehicles: Vehicle[]
@@ -10,6 +18,7 @@ interface StatsCardsProps {
 }
 
 export function StatsCards({ vehicles, colaboradores }: StatsCardsProps) {
+  const { monthlyTotal: monthlyFuelTotal } = useFuelData()
   const totalVehicles = vehicles.length
   const alugados = vehicles.filter((v) => v.tipoPropriedade === "alugado").length
   const proprios = vehicles.filter((v) => v.tipoPropriedade === "proprio").length
@@ -61,11 +70,17 @@ export function StatsCards({ vehicles, colaboradores }: StatsCardsProps) {
       icon: AlertTriangle,
       color: "bg-destructive/10 text-destructive",
     },
+    {
+      label: "Faturamento Mensal",
+      value: formatCurrency(monthlyFuelTotal),
+      icon: Fuel,
+      color: "bg-emerald-500/10 text-emerald-600",
+    },
   ]
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-7">
         {stats.map((stat) => (
           <Card key={stat.label} className="border-border">
             <CardContent className="flex items-center gap-3 p-4">
@@ -74,7 +89,7 @@ export function StatsCards({ vehicles, colaboradores }: StatsCardsProps) {
               </div>
               <div className="min-w-0">
                 <p className="text-xl font-bold text-foreground">{stat.value}</p>
-                <p className="text-xs text-muted-foreground truncate">{stat.label}</p>
+                <p className="text-xs text-muted-foreground leading-tight">{stat.label}</p>
               </div>
             </CardContent>
           </Card>

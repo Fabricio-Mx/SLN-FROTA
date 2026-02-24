@@ -1,60 +1,157 @@
 "use client"
 
+import { useEffect } from "react"
 import useSWR, { mutate } from "swr"
+import { createClient } from "@/lib/supabase/client"
 import type { Colaborador, ColaboradorFormData } from "@/lib/types"
 
-const STORAGE_KEY = "fleet-colaboradores"
+const TABLE = "fleet_colaboradores"
+const SWR_KEY = "fleet-colaboradores"
+const LEGACY_STORAGE_KEY = "fleet-colaboradores"
+const MIGRATION_KEY = "fleet-colaboradores-migrated"
 
-function getColaboradoresFromStorage(): Colaborador[] {
+type ColaboradorRow = {
+  id: string
+  nome: string
+  cpf: string
+  telefone: string
+  departamento: string
+  data_vencimento_cnh: string | null
+  documentos: unknown[] | null
+  checklist: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
+const mapColaboradorRow = (row: ColaboradorRow): Colaborador => {
+  return {
+    id: row.id,
+    nome: row.nome,
+    cpf: row.cpf,
+    telefone: row.telefone,
+    departamento: row.departamento,
+    dataVencimentoCNH: row.data_vencimento_cnh || "",
+    documentos: Array.isArray(row.documentos) ? (row.documentos as Colaborador["documentos"]) : [],
+    checklist: (row.checklist as Colaborador["checklist"]) || undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+const toColaboradorRow = (formData: ColaboradorFormData): Omit<ColaboradorRow, "id" | "created_at" | "updated_at"> => {
+  return {
+    nome: formData.nome,
+    cpf: formData.cpf,
+    telefone: formData.telefone,
+    departamento: formData.departamento,
+    data_vencimento_cnh: formData.dataVencimentoCNH,
+    documentos: formData.documentos ?? [],
+    checklist: formData.checklist ?? null,
+  }
+}
+
+const toColaboradorRowWithMeta = (colaborador: Colaborador): ColaboradorRow => {
+  return {
+    id: colaborador.id,
+    ...toColaboradorRow(colaborador),
+    created_at: colaborador.createdAt,
+    updated_at: colaborador.updatedAt,
+  }
+}
+
+const getLegacyColaboradoresFromStorage = (): Colaborador[] => {
   if (typeof window === "undefined") return []
-  const data = localStorage.getItem(STORAGE_KEY)
+  const data = localStorage.getItem(LEGACY_STORAGE_KEY)
   return data ? JSON.parse(data) : []
 }
 
-function saveColaboradoresToStorage(colaboradores: Colaborador[]): void {
-  if (typeof window === "undefined") return
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(colaboradores))
+const fetcher = async (): Promise<Colaborador[]> => {
+  const supabase = createClient()
+  const { data, error } = await supabase.from(TABLE).select("*").order("created_at", { ascending: false })
+  if (error) {
+    throw new Error(error.message)
+  }
+  return (data || []).map((row) => mapColaboradorRow(row as ColaboradorRow))
 }
 
-const fetcher = (): Colaborador[] => getColaboradoresFromStorage()
-
 export function useColaboradores() {
-  const { data: colaboradores = [], error, isLoading } = useSWR<Colaborador[]>(STORAGE_KEY, fetcher)
+  const { data, error, isLoading } = useSWR<Colaborador[]>(SWR_KEY, fetcher)
+  const colaboradores = data ?? []
 
-  const addColaborador = (formData: ColaboradorFormData): Colaborador => {
-    const newColaborador: Colaborador = {
-      ...formData,
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    if (isLoading) return
+    if (localStorage.getItem(MIGRATION_KEY) === "1") return
+
+    const legacy = getLegacyColaboradoresFromStorage()
+    if (legacy.length === 0 || colaboradores.length > 0) {
+      localStorage.setItem(MIGRATION_KEY, "1")
+      return
     }
-    const updatedColaboradores = [...colaboradores, newColaborador]
-    saveColaboradoresToStorage(updatedColaboradores)
-    mutate(STORAGE_KEY, updatedColaboradores, false)
-    return newColaborador
+
+    const migrate = async () => {
+      const supabase = createClient()
+      const rows = legacy.map((colaborador) => toColaboradorRowWithMeta(colaborador))
+      const { error: upsertError } = await supabase
+        .from(TABLE)
+        .upsert(rows, { onConflict: "id" })
+
+      if (!upsertError) {
+        localStorage.setItem(MIGRATION_KEY, "1")
+        mutate(SWR_KEY)
+      }
+    }
+
+    migrate()
+  }, [isLoading, colaboradores.length])
+
+  const addColaborador = async (formData: ColaboradorFormData): Promise<Colaborador> => {
+    const supabase = createClient()
+    const payload = toColaboradorRow(formData)
+    const { data: inserted, error: insertError } = await supabase
+      .from(TABLE)
+      .insert(payload)
+      .select("*")
+      .single()
+
+    if (insertError || !inserted) {
+      throw new Error(insertError?.message || "Falha ao salvar colaborador.")
+    }
+
+    const colaborador = mapColaboradorRow(inserted as ColaboradorRow)
+    mutate(SWR_KEY)
+    return colaborador
   }
 
-  const updateColaborador = (id: string, formData: ColaboradorFormData): Colaborador | null => {
-    const index = colaboradores.findIndex((c) => c.id === id)
-    if (index === -1) return null
-    
-    const updatedColaborador: Colaborador = {
-      ...colaboradores[index],
-      ...formData,
-      updatedAt: new Date().toISOString(),
+  const updateColaborador = async (id: string, formData: ColaboradorFormData): Promise<Colaborador | null> => {
+    const supabase = createClient()
+    const payload = {
+      ...toColaboradorRow(formData),
+      updated_at: new Date().toISOString(),
     }
-    const updatedColaboradores = [...colaboradores]
-    updatedColaboradores[index] = updatedColaborador
-    saveColaboradoresToStorage(updatedColaboradores)
-    mutate(STORAGE_KEY, updatedColaboradores, false)
-    return updatedColaborador
+    const { data: updated, error: updateError } = await supabase
+      .from(TABLE)
+      .update(payload)
+      .eq("id", id)
+      .select("*")
+      .single()
+
+    if (updateError || !updated) {
+      throw new Error(updateError?.message || "Falha ao atualizar colaborador.")
+    }
+
+    const colaborador = mapColaboradorRow(updated as ColaboradorRow)
+    mutate(SWR_KEY)
+    return colaborador
   }
 
-  const deleteColaborador = (id: string): boolean => {
-    const updatedColaboradores = colaboradores.filter((c) => c.id !== id)
-    if (updatedColaboradores.length === colaboradores.length) return false
-    saveColaboradoresToStorage(updatedColaboradores)
-    mutate(STORAGE_KEY, updatedColaboradores, false)
+  const deleteColaborador = async (id: string): Promise<boolean> => {
+    const supabase = createClient()
+    const { error: deleteError } = await supabase.from(TABLE).delete().eq("id", id)
+    if (deleteError) {
+      throw new Error(deleteError.message)
+    }
+    mutate(SWR_KEY)
     return true
   }
 
