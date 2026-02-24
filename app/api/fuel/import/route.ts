@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { Readable } from "node:stream"
 import { google } from "googleapis"
 import { createAdminClient } from "@/lib/supabase/admin"
 
@@ -134,7 +135,7 @@ async function saveFuelData(drive: ReturnType<typeof google.drive>, parentId: st
       fileId: existing.id,
       media: {
         mimeType: "application/json",
-        body: content,
+        body: Readable.from(content),
       },
       fields: "id, name",
     })
@@ -148,7 +149,7 @@ async function saveFuelData(drive: ReturnType<typeof google.drive>, parentId: st
     },
     media: {
       mimeType: "application/json",
-      body: content,
+      body: Readable.from(content),
     },
     fields: "id, name",
   })
