@@ -7,7 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "@/hooks/use-toast"
 import { useFuelData } from "@/hooks/use-fuel-data"
 
-export function FuelImportPanel() {
+type FuelImportPanelProps = {
+  isMaster?: boolean
+}
+
+export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
   const [uploading, setUploading] = useState(false)
   const { mutate } = useFuelData()
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -55,7 +59,9 @@ export function FuelImportPanel() {
       </CardHeader>
       <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm text-muted-foreground">
-          Envie o arquivo CSV do relatório para atualizar o painel.
+          {isMaster
+            ? "Envie o arquivo CSV do relatório para atualizar o painel."
+            : "Somente o usuário mestre pode importar relatórios."}
         </div>
         <label className="inline-flex">
           <input
@@ -63,13 +69,13 @@ export function FuelImportPanel() {
             accept=".csv,text/csv"
             className="hidden"
             onChange={(e) => handleUpload(e.target.files)}
-            disabled={uploading}
+            disabled={uploading || !isMaster}
             ref={inputRef}
           />
           <Button
             type="button"
-            disabled={uploading}
-            className="gap-2"
+            disabled={uploading || !isMaster}
+            className="gap-2 bg-purple-600 text-white hover:bg-purple-700"
             onClick={() => inputRef.current?.click()}
           >
             <Upload className="h-4 w-4" />

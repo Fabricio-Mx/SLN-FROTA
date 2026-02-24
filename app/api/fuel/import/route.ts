@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { Readable } from "node:stream"
 import { google } from "googleapis"
 import { createAdminClient } from "@/lib/supabase/admin"
+import { verifySession } from "@/lib/auth"
 
 export const runtime = "nodejs"
 
@@ -231,6 +232,11 @@ function buildKey(record: FuelRecord): string {
 
 export async function POST(req: Request) {
   try {
+    const session = await verifySession()
+    if (!session || session.role !== "mestre") {
+      return NextResponse.json({ error: "Sem permissao" }, { status: 403 })
+    }
+
     const formData = await req.formData()
     const file = formData.get("file") as File | null
 

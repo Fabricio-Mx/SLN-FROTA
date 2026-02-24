@@ -505,7 +505,7 @@ export default function FleetPage() {
 
             <TabsContent value="combustivel" className="mt-6 space-y-4">
               <FuelSummary />
-              <FuelImportPanel />
+              <FuelImportPanel isMaster={isMaster} />
               <FuelTransactionsTable />
               <FuelChartsPlaceholder />
             </TabsContent>
