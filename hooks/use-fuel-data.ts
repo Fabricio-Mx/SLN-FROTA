@@ -41,10 +41,13 @@ export function useFuelData() {
   const records = data?.records || []
 
   const now = new Date()
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
+  const sorted = [...records]
+    .map((record) => ({ record, date: new Date(record.dateTime) }))
+    .filter((item) => !Number.isNaN(item.date.getTime()))
+    .sort((a, b) => b.date.getTime() - a.date.getTime())
 
-  const dayStart = startOfDay(yesterday)
+  const reportBaseDate = sorted.length > 0 ? sorted[0].date : now
+  const dayStart = startOfDay(reportBaseDate)
   const dayEnd = new Date(dayStart)
   dayEnd.setHours(23, 59, 59, 999)
 
@@ -63,7 +66,7 @@ export function useFuelData() {
     const recordDate = new Date(record.dateTime)
     if (Number.isNaN(recordDate.getTime())) continue
 
-    if (isSameDay(recordDate, yesterday)) {
+    if (isSameDay(recordDate, dayStart)) {
       dailyTotal += record.valor
     }
 
@@ -83,7 +86,7 @@ export function useFuelData() {
     weeklyTotal,
     monthlyTotal,
     monthlyCount,
-    reportDate: yesterday,
+    reportDate: dayStart,
     isLoading,
     error,
     mutate,

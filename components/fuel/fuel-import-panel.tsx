@@ -75,7 +75,7 @@ export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
           <Button
             type="button"
             disabled={uploading || !isMaster}
-            className="gap-2 bg-purple-600 text-white hover:bg-purple-700"
+            className="gap-2 bg-violet-500 text-white hover:bg-violet-600"
             onClick={() => inputRef.current?.click()}
           >
             <Upload className="h-4 w-4" />

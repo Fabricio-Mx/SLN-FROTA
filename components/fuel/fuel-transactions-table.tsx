@@ -31,17 +31,28 @@ function toDateOnly(value: string): Date | null {
   return new Date(year, month - 1, day)
 }
 
+function toMinutes(value: string): number | null {
+  if (!value) return null
+  const [hours, minutes] = value.split(":").map(Number)
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null
+  return hours * 60 + minutes
+}
+
 export function FuelTransactionsTable() {
   const { records, isLoading } = useFuelData()
   const [search, setSearch] = useState("")
   const [fuelType, setFuelType] = useState("todos")
   const [fromDate, setFromDate] = useState("")
   const [toDate, setToDate] = useState("")
+  const [fromTime, setFromTime] = useState("")
+  const [toTime, setToTime] = useState("")
 
   const filtered = useMemo(() => {
     const searchTerm = search.trim().toLowerCase()
     const start = toDateOnly(fromDate)
     const end = toDateOnly(toDate)
+    const startMinutes = toMinutes(fromTime)
+    const endMinutes = toMinutes(toTime)
     if (end) {
       end.setHours(23, 59, 59, 999)
     }
@@ -66,9 +77,15 @@ export function FuelTransactionsTable() {
       if (start && recordDate < start) return false
       if (end && recordDate > end) return false
 
+      if (startMinutes !== null || endMinutes !== null) {
+        const recordMinutes = recordDate.getHours() * 60 + recordDate.getMinutes()
+        if (startMinutes !== null && recordMinutes < startMinutes) return false
+        if (endMinutes !== null && recordMinutes > endMinutes) return false
+      }
+
       return true
     })
-  }, [records, search, fuelType, fromDate, toDate])
+  }, [records, search, fuelType, fromDate, toDate, fromTime, toTime])
 
   return (
     <Card>
@@ -76,7 +93,7 @@ export function FuelTransactionsTable() {
         <CardTitle>Abastecimentos importados</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-6">
           <div className="space-y-1">
             <Label htmlFor="fuel-search">Buscar</Label>
             <Input
@@ -106,6 +123,24 @@ export function FuelTransactionsTable() {
           <div className="space-y-1">
             <Label htmlFor="fuel-to">Ate</Label>
             <Input id="fuel-to" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="fuel-from-time">Hora de</Label>
+            <Input
+              id="fuel-from-time"
+              type="time"
+              value={fromTime}
+              onChange={(event) => setFromTime(event.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="fuel-to-time">Hora ate</Label>
+            <Input
+              id="fuel-to-time"
+              type="time"
+              value={toTime}
+              onChange={(event) => setToTime(event.target.value)}
+            />
           </div>
         </div>
 

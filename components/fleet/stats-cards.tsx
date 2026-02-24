@@ -87,8 +87,8 @@ export function StatsCards({ vehicles, colaboradores }: StatsCardsProps) {
               <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${stat.color}`}>
                 <stat.icon className="h-5 w-5" />
               </div>
-              <div className="min-w-0">
-                <p className="text-xl font-bold text-foreground">{stat.value}</p>
+              <div className="min-w-0 flex-1">
+                <p className="break-words text-lg font-bold leading-tight text-foreground">{stat.value}</p>
                 <p className="text-xs text-muted-foreground leading-tight">{stat.label}</p>
               </div>
             </CardContent>
