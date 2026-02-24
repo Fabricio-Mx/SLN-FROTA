@@ -80,7 +80,7 @@ export function StatsCards({ vehicles, colaboradores }: StatsCardsProps) {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-7">
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
         {stats.map((stat) => (
           <Card key={stat.label} className="border-border">
             <CardContent className="flex items-center gap-3 p-4">
@@ -88,7 +88,7 @@ export function StatsCards({ vehicles, colaboradores }: StatsCardsProps) {
                 <stat.icon className="h-5 w-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="break-words text-lg font-bold leading-tight text-foreground">{stat.value}</p>
+                <p className="text-xl font-bold leading-tight text-foreground whitespace-nowrap">{stat.value}</p>
                 <p className="text-xs text-muted-foreground leading-tight">{stat.label}</p>
               </div>
             </CardContent>
