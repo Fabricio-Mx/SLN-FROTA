@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin"
 import { verifySession } from "@/lib/auth"
+import { USER_ROLES } from "@/lib/auth-shared"
 import { NextResponse } from "next/server"
 
 // DELETE - Remover usuário (apenas mestre)
@@ -19,6 +20,19 @@ export async function DELETE(
 
   try {
     const supabase = createAdminClient()
+
+    const { data: authUser } = await supabase.auth.admin.getUserById(id)
+    const driveFileId = authUser.user?.user_metadata?.avatar_drive_file_id as string | undefined
+
+    if (driveFileId) {
+      try {
+        const { getDriveClients } = await import("@/lib/google-drive")
+        const drive = (await getDriveClients())[0]
+        await drive.files.delete({ fileId: driveFileId })
+      } catch {
+        // Ignora falha de limpeza do Drive para nao bloquear exclusao do usuario.
+      }
+    }
 
     const { error: authError } = await supabase.auth.admin.deleteUser(id)
     if (authError) {
@@ -58,6 +72,10 @@ export async function PATCH(
   const body = await request.json()
   const { role, nome } = body
 
+  if (role && !USER_ROLES.includes(role)) {
+    return NextResponse.json({ error: "Tipo de acesso inválido" }, { status: 400 })
+  }
+
   try {
     const supabase = createAdminClient()
 
@@ -76,8 +94,12 @@ export async function PATCH(
     }
 
     if (role || nome) {
+      const { data: authUser } = await supabase.auth.admin.getUserById(id)
+      const currentMetadata = authUser.user?.user_metadata || {}
+
       await supabase.auth.admin.updateUserById(id, {
         user_metadata: {
+          ...currentMetadata,
           ...(nome ? { nome } : {}),
           ...(role ? { role } : {}),
         },

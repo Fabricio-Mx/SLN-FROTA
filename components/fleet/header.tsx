@@ -1,10 +1,9 @@
 "use client"
 
 import Image from "next/image"
-import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Car, LogOut, Users, Shield, ChevronDown } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import {
   DropdownMenu,
@@ -20,22 +19,25 @@ interface HeaderProps {
   userRole: UserRole
   userEmail?: string
   userName?: string
+  userAvatarUrl?: string | null
 }
 
 const ROLE_COLORS: Record<UserRole, string> = {
   mestre: "bg-amber-100 text-amber-800 border-amber-200",
   consulta: "bg-blue-100 text-blue-800 border-blue-200",
   administrativo: "bg-green-100 text-green-800 border-green-200",
+  administrativo_rh: "bg-cyan-100 text-cyan-800 border-cyan-200",
   logistico: "bg-purple-100 text-purple-800 border-purple-200",
 }
 
-export function Header({ userRole, userEmail, userName }: HeaderProps) {
-  const router = useRouter()
-
+export function Header({ userRole, userEmail, userName, userAvatarUrl }: HeaderProps) {
   const handleLogout = async () => {
     const { logoutAction } = await import("@/app/actions/auth")
     await logoutAction()
   }
+
+  const userInitial = (userName || userEmail || "U").charAt(0).toUpperCase()
+  const containerClass = "mx-auto w-full max-w-[1440px] px-5 sm:px-6 lg:px-8 xl:px-10"
 
   return (
     <header className="bg-card">
@@ -44,7 +46,7 @@ export function Header({ userRole, userEmail, userName }: HeaderProps) {
       
       {/* Logo e nome da empresa */}
       <div className="bg-white border-b border-border">
-        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+        <div className={`${containerClass} py-4`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-5">
               <div className="rounded-lg bg-white p-2 shadow-sm border border-border">
@@ -70,10 +72,13 @@ export function Header({ userRole, userEmail, userName }: HeaderProps) {
             <div className="flex items-center gap-3">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-3 rounded-xl border border-border bg-muted/50 px-4 py-2.5 hover:bg-muted transition-colors cursor-pointer">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#7CB342] text-white text-sm font-bold">
-                      {(userName || userEmail || "U").charAt(0).toUpperCase()}
-                    </div>
+                  <button className="flex items-center gap-3 rounded-2xl border border-border bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(243,246,241,0.98)_100%)] px-4 py-2.5 shadow-sm transition-colors hover:bg-muted cursor-pointer">
+                    <Avatar className="h-10 w-10 ring-2 ring-[#dbe8cf]">
+                      <AvatarImage src={userAvatarUrl || undefined} alt={userName || "Usuário"} className="object-cover" />
+                      <AvatarFallback className="bg-[#7CB342] text-sm font-bold text-white">
+                        {userInitial}
+                      </AvatarFallback>
+                    </Avatar>
                     <div className="hidden sm:flex flex-col items-start gap-0.5">
                       <span className="text-sm font-medium text-foreground leading-tight">{userName || "Usuário"}</span>
                       <Badge variant="outline" className={`text-[10px] px-1.5 py-0 h-4 ${ROLE_COLORS[userRole]}`}>
@@ -87,11 +92,15 @@ export function Header({ userRole, userEmail, userName }: HeaderProps) {
                 <DropdownMenuContent align="end" className="w-64">
                   <div className="px-4 py-3 border-b border-border">
                     <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#7CB342] text-white font-bold">
-                        {(userName || userEmail || "U").charAt(0).toUpperCase()}
-                      </div>
+                      <Avatar className="h-11 w-11 ring-2 ring-[#dbe8cf]">
+                        <AvatarImage src={userAvatarUrl || undefined} alt={userName || "Usuário"} className="object-cover" />
+                        <AvatarFallback className="bg-[#7CB342] font-bold text-white">
+                          {userInitial}
+                        </AvatarFallback>
+                      </Avatar>
                       <div>
                         <p className="text-sm font-semibold">{userName || "Usuário"}</p>
+                        <p className="text-xs text-muted-foreground">{userEmail || ""}</p>
                         <p className="text-xs text-muted-foreground">{ROLE_LABELS[userRole]}</p>
                       </div>
                     </div>
@@ -121,7 +130,7 @@ export function Header({ userRole, userEmail, userName }: HeaderProps) {
       
       {/* Título do sistema */}
       <div className="border-b border-border">
-        <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
+        <div className={`${containerClass} flex items-center gap-3 py-3`}>
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Car className="h-5 w-5" />
           </div>

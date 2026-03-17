@@ -22,6 +22,7 @@ import type { Colaborador, Vehicle } from "@/lib/types"
 interface ColaboradoresTableProps {
   colaboradores: Colaborador[]
   vehicles: Vehicle[]
+  canManage?: boolean
   onEdit: (colaborador: Colaborador) => void
   onDelete: (id: string) => void
 }
@@ -29,6 +30,7 @@ interface ColaboradoresTableProps {
 export function ColaboradoresTable({
   colaboradores,
   vehicles,
+  canManage = true,
   onEdit,
   onDelete,
 }: ColaboradoresTableProps) {
@@ -54,29 +56,47 @@ export function ColaboradoresTable({
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/50">
-            <TableHead className="font-semibold">Nome</TableHead>
-            <TableHead className="font-semibold">CPF</TableHead>
-            <TableHead className="font-semibold">Telefone</TableHead>
-            <TableHead className="font-semibold">Departamento</TableHead>
-            <TableHead className="font-semibold">Vencimento CNH</TableHead>
-            <TableHead className="font-semibold">Veículo</TableHead>
-            <TableHead className="font-semibold">KM</TableHead>
-            <TableHead className="w-[70px]"></TableHead>
+            <TableHead className="text-[0.88rem] font-semibold">Nome</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold">CPF</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold">Telefone</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold">Departamento</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold">Vencimento CNH</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold">Veículo</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold">KM</TableHead>
+            {canManage ? <TableHead className="w-[70px]"></TableHead> : null}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {colaboradores.map((colaborador) => {
+          {colaboradores.map((colaborador, index) => {
             const assignedVehicles = getVehiclesByColaborador(colaborador.id)
+            const rowClass = index % 2 === 0 ? "bg-white hover:bg-[#e7f4dc]" : "bg-[#fbfdf9] hover:bg-[#deefd0]"
 
             return (
-              <TableRow key={colaborador.id}>
-                <TableCell className="font-medium">{colaborador.nome}</TableCell>
-                <TableCell className="font-mono text-sm text-muted-foreground">
+              <TableRow key={colaborador.id} className={rowClass}>
+                <TableCell>
+                  <div className="space-y-1">
+                    <p className="text-[0.95rem] font-medium">{colaborador.nome}</p>
+                    {colaborador.email ? <p className="text-xs text-muted-foreground">{colaborador.email}</p> : null}
+                  </div>
+                </TableCell>
+                <TableCell className="font-mono text-[0.9rem] text-muted-foreground">
                   {colaborador.cpf}
                 </TableCell>
-                <TableCell className="text-sm">{colaborador.telefone}</TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{colaborador.departamento}</Badge>
+                  <div className="space-y-1 text-[0.92rem]">
+                    <p>{colaborador.telefone}</p>
+                    {colaborador.cep ? <p className="text-xs text-muted-foreground">CEP: {colaborador.cep}</p> : null}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="space-y-1">
+                    <Badge variant="secondary">{colaborador.departamento}</Badge>
+                    {colaborador.endereco ? (
+                      <p className="max-w-[240px] truncate text-xs text-muted-foreground" title={colaborador.endereco}>
+                        {colaborador.endereco}
+                      </p>
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell>
                   {(() => {
@@ -87,7 +107,7 @@ export function ColaboradoresTable({
                     const vencendo = vencimento <= trintaDias && vencimento >= hoje
                     
                     return (
-                      <span className={`text-sm font-medium ${vencido ? "text-destructive" : vencendo ? "text-chart-3" : "text-foreground"}`}>
+                      <span className={`text-[0.92rem] font-medium ${vencido ? "text-destructive" : vencendo ? "text-chart-3" : "text-foreground"}`}>
                         {vencimento.toLocaleDateString("pt-BR")}
                         {vencido && " (Vencida)"}
                         {vencendo && " (Vencendo)"}
@@ -108,12 +128,12 @@ export function ColaboradoresTable({
                       ))}
                     </div>
                   ) : (
-                    <span className="text-sm font-medium text-accent">
+                    <span className="text-[0.92rem] font-medium text-accent">
                       Sem veículo
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
+                <TableCell className="text-[0.9rem] text-muted-foreground">
                   {assignedVehicles.length > 0 ? (
                     <span>
                       {(assignedVehicles[0].km ?? 0).toLocaleString("pt-BR")} km
@@ -122,30 +142,32 @@ export function ColaboradoresTable({
                     <span>-</span>
                   )}
                 </TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreHorizontal className="h-4 w-4" />
-                        <span className="sr-only">Abrir menu</span>
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => onEdit(colaborador)}>
-                        <Edit className="mr-2 h-4 w-4" />
-                        Editar
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => onDelete(colaborador.id)}
-                        className="text-destructive focus:text-destructive"
-                        disabled={assignedVehicles.length > 0}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Excluir
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
+                {canManage ? (
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="h-4 w-4" />
+                          <span className="sr-only">Abrir menu</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => onEdit(colaborador)}>
+                          <Edit className="mr-2 h-4 w-4" />
+                          Editar
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => onDelete(colaborador.id)}
+                          className="text-destructive focus:text-destructive"
+                          disabled={assignedVehicles.length > 0}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Excluir
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                ) : null}
               </TableRow>
             )
           })}

@@ -1,23 +1,31 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { MASTER_CREDENTIALS } from '@/lib/auth-shared'
+import { SESSION_ACTIVITY_COOKIE, SESSION_IDLE_MS, USER_SESSION_COOKIE } from '@/lib/auth'
+
+const MASTER_DB_EMAIL = process.env.MASTER_DB_EMAIL || 'admin@sln.com'
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
   })
 
-  // Allow app_user cookie (master login) to pass without Supabase session
-  const appUserCookie = request.cookies.get("app_user")?.value
+  let hasMasterCookie = false
+  let hasValidAppSession = false
+  const appUserCookie = request.cookies.get(USER_SESSION_COOKIE)?.value
+  const lastActivityCookie = request.cookies.get(SESSION_ACTIVITY_COOKIE)?.value
   if (appUserCookie) {
     try {
       const appUser = JSON.parse(decodeURIComponent(appUserCookie)) as {
         isMaster?: boolean
       }
-      if (appUser?.isMaster) {
-        return supabaseResponse
-      }
+      hasMasterCookie = appUser?.isMaster === true
+
+      const lastActivityAt = Number(lastActivityCookie)
+      hasValidAppSession = Number.isFinite(lastActivityAt) && Date.now() - lastActivityAt <= SESSION_IDLE_MS
     } catch {
-      // Ignore invalid cookie and continue with Supabase session check
+      hasMasterCookie = false
+      hasValidAppSession = false
     }
   }
 
@@ -44,30 +52,44 @@ export async function updateSession(request: NextRequest) {
     },
   )
 
-  const {
+  let {
     data: { user },
   } = await supabase.auth.getUser()
 
+  if (!user && hasMasterCookie) {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: MASTER_DB_EMAIL,
+      password: MASTER_CREDENTIALS.password,
+    })
+
+    if (!error) {
+      user = data.user
+    }
+  }
+
   // Redireciona para login se não autenticado e tentando acessar rotas protegidas
   if (
-    !user &&
+    !hasValidAppSession &&
     !request.nextUrl.pathname.startsWith('/auth') &&
     request.nextUrl.pathname !== '/'
   ) {
     const url = request.nextUrl.clone()
     url.pathname = '/auth/login'
-    return NextResponse.redirect(url)
+    const response = NextResponse.redirect(url)
+    response.cookies.set(USER_SESSION_COOKIE, '', { path: '/', maxAge: 0 })
+    response.cookies.set(SESSION_ACTIVITY_COOKIE, '', { path: '/', maxAge: 0 })
+    return response
   }
 
   // Se usuário logado e na página de login, redireciona para dashboard
-  if (user && request.nextUrl.pathname.startsWith('/auth')) {
+  if (hasValidAppSession && request.nextUrl.pathname.startsWith('/auth')) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)
   }
 
   // Se usuário logado e na raiz, redireciona para dashboard
-  if (user && request.nextUrl.pathname === '/') {
+  if (hasValidAppSession && request.nextUrl.pathname === '/') {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)

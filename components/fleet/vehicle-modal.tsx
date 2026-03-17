@@ -3,6 +3,7 @@
 import React from "react"
 
 import { useEffect, useState, type FormEvent } from "react"
+import { ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -23,7 +24,15 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/hooks/use-toast"
+import { getNextReviewKm } from "@/lib/fleet-maintenance"
 import type { Vehicle, VehicleFormData } from "@/lib/types"
+
+const FORNECEDORES_PROPRIO = [
+  { value: "bradesco_financiamento", label: "Bradesco Financiamento" },
+  { value: "banco_pan", label: "BANCO PAN S.A." },
+  { value: "banco_volkswagen", label: "BANCO VOLKSWAGEN S.A." },
+  { value: "sisprime_cdc", label: "Sisprime do Brasil - CDC" },
+] as const
 
 interface VehicleModalProps {
   open: boolean
@@ -35,13 +44,18 @@ interface VehicleModalProps {
 const initialFormData: VehicleFormData = {
   placa: "",
   chassi: "",
+  renavan: null,
   modelo: "",
   km: 0,
+  kmUltimaRevisao: null,
   mensalidade: 0,
   dataVencimentoContrato: "",
   tipoPropriedade: "proprio",
   empresaLocacao: null,
+  fornecedorProprio: null,
   cartaoCombustivel: "veloe",
+  numeroCartaoCombustivel: null,
+  placaCartaoCombustivel: null,
   frota: true,
   naOficina: false,
   paraRevisao: false,
@@ -61,20 +75,24 @@ export function VehicleModal({
   const [formData, setFormData] = useState<VehicleFormData>(initialFormData)
   const [errors, setErrors] = useState<Partial<Record<keyof VehicleFormData, string>>>({})
   const [uploadingImages, setUploadingImages] = useState(false)
-  const [uploadingChecklists, setUploadingChecklists] = useState(false)
 
   useEffect(() => {
     if (vehicle) {
       setFormData({
         placa: vehicle.placa || "",
         chassi: vehicle.chassi || "",
+        renavan: vehicle.renavan || null,
         modelo: vehicle.modelo || "",
         km: vehicle.km ?? 0,
+        kmUltimaRevisao: vehicle.kmUltimaRevisao ?? null,
         mensalidade: vehicle.mensalidade ?? 0,
         dataVencimentoContrato: vehicle.dataVencimentoContrato || "",
         tipoPropriedade: vehicle.tipoPropriedade || "proprio",
         empresaLocacao: vehicle.empresaLocacao || null,
+        fornecedorProprio: vehicle.fornecedorProprio || null,
         cartaoCombustivel: vehicle.cartaoCombustivel || "veloe",
+        numeroCartaoCombustivel: vehicle.numeroCartaoCombustivel || null,
+        placaCartaoCombustivel: vehicle.placaCartaoCombustivel || null,
         frota: vehicle.frota ?? true,
         naOficina: vehicle.naOficina ?? false,
         paraRevisao: vehicle.paraRevisao ?? false,
@@ -92,6 +110,7 @@ export function VehicleModal({
 
   const imagens = formData.imagens || []
   const checklists = formData.checklists || []
+  const proximaRevisaoKm = getNextReviewKm(formData.kmUltimaRevisao)
 
   const handleUpload = async (files: FileList | null, kind: "imagens" | "checklists") => {
     if (!files || files.length === 0) return
@@ -103,7 +122,7 @@ export function VehicleModal({
       return
     }
 
-    const setUploading = kind === "imagens" ? setUploadingImages : setUploadingChecklists
+    const setUploading = setUploadingImages
     const currentList = kind === "imagens" ? imagens : checklists
 
     setUploading(true)
@@ -133,8 +152,6 @@ export function VehicleModal({
 
       if (kind === "imagens") {
         setFormData({ ...formData, imagens: uploaded })
-      } else {
-        setFormData({ ...formData, checklists: uploaded })
       }
       toast({ title: "Sucesso", description: "Arquivos enviados para o Drive." })
     } catch (error) {
@@ -163,8 +180,19 @@ export function VehicleModal({
       newErrors.chassi = "Chassi deve ter 17 caracteres"
     }
 
+    if (formData.renavan && !/^\d{9,11}$/.test(formData.renavan)) {
+      newErrors.renavan = "Renavan deve conter entre 9 e 11 dígitos"
+    }
+
     if (!formData.modelo) {
       newErrors.modelo = "Modelo é obrigatório"
+    }
+
+    if (
+      typeof formData.kmUltimaRevisao === "number" &&
+      formData.kmUltimaRevisao > formData.km
+    ) {
+      newErrors.kmUltimaRevisao = "O KM da última revisão não pode ser maior que o KM atual"
     }
 
     if (formData.mensalidade < 0) {
@@ -177,6 +205,10 @@ export function VehicleModal({
 
     if (formData.tipoPropriedade === "alugado" && !formData.empresaLocacao) {
       newErrors.empresaLocacao = "Selecione a empresa de locação"
+    }
+
+    if (formData.tipoPropriedade === "proprio" && !formData.fornecedorProprio) {
+      newErrors.fornecedorProprio = "Selecione o fornecedor do veículo próprio"
     }
 
     setErrors(newErrors)
@@ -241,6 +273,25 @@ export function VehicleModal({
               )}
             </div>
             <div className="grid gap-2">
+              <Label htmlFor="renavan">Renavan</Label>
+              <Input
+                id="renavan"
+                placeholder="Somente números"
+                value={formData.renavan || ""}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    renavan: e.target.value.replace(/\D/g, "").slice(0, 11) || null,
+                  })
+                }
+                inputMode="numeric"
+                maxLength={11}
+              />
+              {errors.renavan && (
+                <p className="text-sm text-destructive">{errors.renavan}</p>
+              )}
+            </div>
+            <div className="grid gap-2">
               <Label htmlFor="modelo">Modelo do Veículo</Label>
               <Input
                 id="modelo"
@@ -266,6 +317,32 @@ export function VehicleModal({
                   setFormData({ ...formData, km: parseInt(e.target.value) || 0 })
                 }
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="kmUltimaRevisao">KM da Última Revisão</Label>
+              <Input
+                id="kmUltimaRevisao"
+                type="number"
+                min="0"
+                placeholder="Ex: 50000"
+                value={formData.kmUltimaRevisao ?? ""}
+                onChange={(e) => {
+                  const value = e.target.value
+
+                  setFormData({
+                    ...formData,
+                    kmUltimaRevisao: value === "" ? null : parseInt(value, 10) || 0,
+                  })
+                }}
+              />
+              {errors.kmUltimaRevisao && (
+                <p className="text-sm text-destructive">{errors.kmUltimaRevisao}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {proximaRevisaoKm !== null
+                  ? `Próxima revisão prevista em ${proximaRevisaoKm.toLocaleString("pt-BR")} km.`
+                  : "Informe o KM da última revisão para calcular automaticamente a próxima em 10.000 km."}
+              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="mensalidade">Valor da Mensalidade (R$)</Label>
@@ -301,7 +378,7 @@ export function VehicleModal({
               )}
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="imagens">Imagens do Veiculo</Label>
+              <Label htmlFor="imagens">Imagens do Veículo</Label>
               <Input
                 id="imagens"
                 type="file"
@@ -326,36 +403,19 @@ export function VehicleModal({
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                {uploadingImages ? "Enviando imagens..." : "Arquivos vao para o Drive da empresa."}
+                {uploadingImages ? "Enviando imagens..." : "Arquivos vão para o Drive da empresa."}
               </p>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="checklists">Checklist do Veiculo</Label>
-              <Input
-                id="checklists"
-                type="file"
-                multiple
-                accept=".pdf,image/*"
-                onChange={(e) => handleUpload(e.target.files, "checklists")}
-                disabled={uploadingChecklists}
-              />
-              {checklists.length > 0 && (
-                <div className="flex flex-wrap gap-2 text-xs">
-                  {checklists.map((item) => (
-                    <a
-                      key={item.id}
-                      href={item.webViewLink || "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded bg-muted px-2 py-1 text-muted-foreground hover:text-foreground"
-                    >
-                      {item.name}
-                    </a>
-                  ))}
-                </div>
-              )}
+              <Label htmlFor="checklists">Checklist do Veículo</Label>
+              <Button type="button" variant="outline" className="justify-start gap-2 bg-transparent" asChild>
+                <a href="https://app.vexsoft.com.br/login.php?returnUrl=/" target="_blank" rel="noreferrer">
+                  Acessar checklist na Vexsoft
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </Button>
               <p className="text-xs text-muted-foreground">
-                {uploadingChecklists ? "Enviando checklists..." : "Arquivos vao para o Drive da empresa."}
+                O checklist do veículo é realizado diretamente na Vexsoft.
               </p>
             </div>
             <div className="grid gap-2">
@@ -367,6 +427,7 @@ export function VehicleModal({
                     ...formData,
                     tipoPropriedade: value as "alugado" | "proprio",
                     empresaLocacao: value === "proprio" ? null : formData.empresaLocacao,
+                    fornecedorProprio: value === "alugado" ? null : formData.fornecedorProprio,
                   })
                 }
               >
@@ -406,6 +467,34 @@ export function VehicleModal({
                 )}
               </div>
             )}
+            {formData.tipoPropriedade === "proprio" && (
+              <div className="grid gap-2">
+                <Label htmlFor="fornecedorProprio">Fornecedor do Veículo</Label>
+                <Select
+                  value={formData.fornecedorProprio || ""}
+                  onValueChange={(value) =>
+                    setFormData({
+                      ...formData,
+                      fornecedorProprio: value,
+                    })
+                  }
+                >
+                  <SelectTrigger id="fornecedorProprio">
+                    <SelectValue placeholder="Selecione o fornecedor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FORNECEDORES_PROPRIO.map((fornecedor) => (
+                      <SelectItem key={fornecedor.value} value={fornecedor.value}>
+                        {fornecedor.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.fornecedorProprio && (
+                  <p className="text-sm text-destructive">{errors.fornecedorProprio}</p>
+                )}
+              </div>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="cartaoCombustivel">Cartão Combustível</Label>
               <Select
@@ -426,6 +515,35 @@ export function VehicleModal({
                   <SelectItem value="ambos">Veloe/Ticket</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="numeroCartaoCombustivel">Número do Cartão</Label>
+              <Input
+                id="numeroCartaoCombustivel"
+                placeholder="Ex: 1234567890"
+                value={formData.numeroCartaoCombustivel || ""}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    numeroCartaoCombustivel: e.target.value || null,
+                  })
+                }
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="placaCartaoCombustivel">Placa Registrada no Cartão</Label>
+              <Input
+                id="placaCartaoCombustivel"
+                placeholder="ABC1D23"
+                value={formData.placaCartaoCombustivel || ""}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    placaCartaoCombustivel: e.target.value.toUpperCase() || null,
+                  })
+                }
+                maxLength={8}
+              />
             </div>
             <div className="space-y-3 rounded-lg border border-border p-3">
               <Label className="text-sm font-medium text-muted-foreground">Situação do Veículo</Label>
@@ -463,7 +581,7 @@ export function VehicleModal({
                     }
                   />
                   <Label htmlFor="paraRevisao" className="text-sm font-medium leading-none cursor-pointer">
-                    Para Revisão
+                    Para Revisão (manual)
                   </Label>
                 </div>
                 <div className="flex items-center space-x-2">

@@ -1,6 +1,6 @@
 "use client"
 
-import { Edit, MoreHorizontal, Trash2, UserPlus, UserMinus } from "lucide-react"
+import { CreditCard, Edit, MoreHorizontal, Trash2, UserPlus, UserMinus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,11 +18,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { getVehicleReviewMilestone, isVehicleDueForReview } from "@/lib/fleet-maintenance"
 import type { Vehicle, Colaborador } from "@/lib/types"
 
 interface VehiclesTableProps {
   vehicles: Vehicle[]
   colaboradores: Colaborador[]
+  canManage?: boolean
   onEdit: (vehicle: Vehicle) => void
   onDelete: (id: string) => void
   onAssign: (vehicle: Vehicle) => void
@@ -63,7 +65,50 @@ function getEmpresaLocacaoNome(empresa: string | null | undefined): string {
   return empresa ? nomes[empresa] || empresa : "-"
 }
 
-export function VehiclesTable({ vehicles, colaboradores, onEdit, onDelete, onAssign, onUnassign }: VehiclesTableProps) {
+function getFornecedorProprioNome(fornecedor: string | null | undefined): string {
+  const nomes: Record<string, string> = {
+    bradesco_financiamento: "Bradesco Financiamento",
+    banco_pan: "BANCO PAN S.A.",
+    banco_volkswagen: "BANCO VOLKSWAGEN S.A.",
+    sisprime_cdc: "Sisprime do Brasil - CDC",
+  }
+
+  return fornecedor ? nomes[fornecedor] || fornecedor : "-"
+}
+
+function getRowHighlightClass(expired: boolean, expiring: boolean, index: number): string {
+  const defaultHoverClass = index % 2 === 0 ? "bg-white hover:bg-[#e7f4dc]" : "bg-[#fbfdf9] hover:bg-[#deefd0]"
+
+  if (expired) {
+    return "bg-red-50/70 hover:bg-[#e7f4dc]"
+  }
+
+  if (expiring) {
+    return "bg-amber-50/60 hover:bg-[#deefd0]"
+  }
+
+  return defaultHoverClass
+}
+
+function getCartaoBadgeClass(cartao: Vehicle["cartaoCombustivel"]): string {
+  if (cartao === "veloe") {
+    return "border-violet-200 bg-violet-100 text-violet-700 hover:bg-violet-100"
+  }
+
+  if (cartao === "ticket") {
+    return "border-sky-200 bg-sky-100 text-sky-700 hover:bg-sky-100"
+  }
+
+  return "border-fuchsia-200 bg-fuchsia-100 text-fuchsia-700 hover:bg-fuchsia-100"
+}
+
+function getCartaoLabel(cartao: Vehicle["cartaoCombustivel"]): string {
+  if (cartao === "veloe") return "Veloe"
+  if (cartao === "ticket") return "Ticket"
+  return "Veloe/Ticket"
+}
+
+export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdit, onDelete, onAssign, onUnassign }: VehiclesTableProps) {
   const getColaboradorName = (colaboradorId: string | null | undefined) => {
     if (!colaboradorId) return null
     const colaborador = colaboradores.find((c) => c.id === colaboradorId)
@@ -83,45 +128,80 @@ export function VehiclesTable({ vehicles, colaboradores, onEdit, onDelete, onAss
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
-      <Table>
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="overflow-x-auto">
+        <Table className="min-w-[1380px]">
         <TableHeader>
-          <TableRow className="bg-muted/50 text-center">
-            <TableHead className="font-semibold text-center">Placa</TableHead>
-            <TableHead className="font-semibold text-center">Modelo</TableHead>
-            <TableHead className="font-semibold text-center">KM</TableHead>
-            <TableHead className="font-semibold text-center">Mensalidade</TableHead>
-            <TableHead className="font-semibold text-center">Vencimento</TableHead>
-            <TableHead className="font-semibold text-center">Propriedade</TableHead>
-            <TableHead className="font-semibold text-center">Locadora</TableHead>
-            <TableHead className="font-semibold text-center">Cartão</TableHead>
-            <TableHead className="font-semibold text-center">Status</TableHead>
-            <TableHead className="font-semibold text-center">Sem parar</TableHead>
-            <TableHead className="font-semibold text-center">Colaborador</TableHead>
-            <TableHead className="w-[70px] text-center"></TableHead>
+          <TableRow className="bg-muted/50">
+            <TableHead className="text-[0.88rem] font-semibold text-left">Veículo</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-left">Modelo</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-center">KM</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-center">Próx. Revisão</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-center">Mensalidade</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-center">Vencimento</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-left">Origem</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-left">Cartão</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-center">Status</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-center">Sem Parar</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-left">Colaborador</TableHead>
+            {canManage ? (
+              <TableHead className="sticky right-0 z-10 w-[70px] bg-muted/50 text-center shadow-[-1px_0_0_hsl(var(--border))]"></TableHead>
+            ) : null}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {vehicles.map((vehicle) => {
+          {vehicles.map((vehicle, index) => {
             const expired = isContractExpired(vehicle.dataVencimentoContrato)
             const expiring = isContractExpiring(vehicle.dataVencimentoContrato)
             const colaboradorNome = getColaboradorName(vehicle.colaboradorId)
+            const rowHighlightClass = getRowHighlightClass(expired, expiring, index)
+            const reviewMilestone = getVehicleReviewMilestone(vehicle)
+            const dueForReview = isVehicleDueForReview(vehicle)
+            const stickyActionClass = expired
+              ? "bg-red-50/70 group-hover:bg-[#e7f4dc]"
+              : expiring
+              ? "bg-amber-50/60 group-hover:bg-[#deefd0]"
+              : index % 2 === 0
+              ? "bg-white group-hover:bg-[#e7f4dc]"
+              : "bg-[#fbfdf9] group-hover:bg-[#deefd0]"
 
             return (
-              <TableRow key={vehicle.id} className="text-center">
-                <TableCell className="font-mono font-medium">
-                  {vehicle.placa}
+              <TableRow key={vehicle.id} className={`group ${rowHighlightClass}`}>
+                <TableCell className="align-middle text-left">
+                  <div className="space-y-1">
+                    <div className="font-mono text-[0.95rem] font-semibold text-foreground">{vehicle.placa}</div>
+                    <div className="text-[0.78rem] text-muted-foreground">Renavan: {vehicle.renavan || "-"}</div>
+                  </div>
                 </TableCell>
-                <TableCell className="text-sm">
+                <TableCell className="align-middle text-left text-[0.92rem]">
                   {vehicle.modelo}
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
+                <TableCell className="align-middle text-center text-[0.9rem] text-muted-foreground">
                   {(vehicle.km ?? 0).toLocaleString("pt-BR")} km
                 </TableCell>
-                <TableCell className="font-medium text-sm">
+                <TableCell className="align-middle text-center">
+                  {reviewMilestone.proximaRevisaoKm !== null ? (
+                    <div className="space-y-1 text-[0.9rem]">
+                      <div className={reviewMilestone.emAtraso ? "font-medium text-destructive" : "font-medium text-foreground"}>
+                        {reviewMilestone.proximaRevisaoKm.toLocaleString("pt-BR")} km
+                      </div>
+                      <div className="text-[0.78rem] text-muted-foreground">
+                        Última: {vehicle.kmUltimaRevisao?.toLocaleString("pt-BR")} km
+                      </div>
+                      <div className={reviewMilestone.emAtraso ? "text-[0.78rem] font-medium text-destructive" : "text-[0.78rem] text-muted-foreground"}>
+                        {reviewMilestone.emAtraso
+                          ? `Atrasada em ${Math.abs(reviewMilestone.kmRestante ?? 0).toLocaleString("pt-BR")} km`
+                          : `Faltam ${(reviewMilestone.kmRestante ?? 0).toLocaleString("pt-BR")} km`}
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-[0.8rem] text-muted-foreground">Não informado</span>
+                  )}
+                </TableCell>
+                <TableCell className="align-middle text-center text-[0.92rem] font-medium">
                   {formatCurrency(vehicle.mensalidade)}
                 </TableCell>
-                <TableCell>
+                <TableCell className="align-middle text-center">
                   <span
                     className={
                       expired
@@ -134,135 +214,147 @@ export function VehiclesTable({ vehicles, colaboradores, onEdit, onDelete, onAss
                     {formatDate(vehicle.dataVencimentoContrato)}
                   </span>
                   {expired && (
-                    <Badge variant="destructive" className="ml-2 text-xs">
+                    <Badge variant="destructive" className="ml-2 text-[0.76rem]">
                       Vencido
                     </Badge>
                   )}
                   {!expired && expiring && (
-                    <Badge className="ml-2 bg-chart-3/10 text-chart-3 hover:bg-chart-3/20 text-xs">
+                    <Badge className="ml-2 bg-chart-3/10 text-chart-3 hover:bg-chart-3/20 text-[0.76rem]">
                       Vencendo
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell>
-                  <Badge
-                    variant={vehicle.tipoPropriedade === "proprio" ? "default" : "secondary"}
-                    className={
-                      vehicle.tipoPropriedade === "proprio"
-                        ? "bg-accent/10 text-accent hover:bg-accent/20"
-                        : ""
-                    }
-                  >
-                    {vehicle.tipoPropriedade === "proprio" ? "Próprio" : "Alugado"}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  {vehicle.tipoPropriedade === "alugado" ? (
-                    <Badge variant="outline" className="bg-secondary/50">
-                      {getEmpresaLocacaoNome(vehicle.empresaLocacao)}
+                <TableCell className="align-middle text-left">
+                  <div className="space-y-2">
+                    <Badge
+                      variant={vehicle.tipoPropriedade === "proprio" ? "default" : "secondary"}
+                      className={
+                        vehicle.tipoPropriedade === "proprio"
+                          ? "bg-accent/10 text-accent hover:bg-accent/20"
+                          : ""
+                      }
+                    >
+                      {vehicle.tipoPropriedade === "proprio" ? "Próprio" : "Alugado"}
                     </Badge>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">-</span>
-                  )}
+                    <div className="text-[0.78rem] text-muted-foreground">
+                      {vehicle.tipoPropriedade === "alugado"
+                        ? getEmpresaLocacaoNome(vehicle.empresaLocacao)
+                        : getFornecedorProprioNome(vehicle.fornecedorProprio)}
+                    </div>
+                  </div>
                 </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="font-medium">
-                    {vehicle.cartaoCombustivel === "veloe" 
-                      ? "Veloe" 
-                      : vehicle.cartaoCombustivel === "ticket" 
-                      ? "Ticket" 
-                      : "Veloe/Ticket"}
-                  </Badge>
+                <TableCell className="align-middle text-left">
+                  <div className="space-y-2">
+                    <Badge variant="outline" className={`gap-1.5 font-medium ${getCartaoBadgeClass(vehicle.cartaoCombustivel)}`}>
+                      <CreditCard className="h-3.5 w-3.5" />
+                      {getCartaoLabel(vehicle.cartaoCombustivel)}
+                    </Badge>
+                    {vehicle.numeroCartaoCombustivel || vehicle.placaCartaoCombustivel ? (
+                      <div className="space-y-1 text-[0.78rem]">
+                        <div className="font-medium text-foreground">
+                          {vehicle.numeroCartaoCombustivel || "Sem número"}
+                        </div>
+                        <div className="text-muted-foreground">
+                          Placa: {vehicle.placaCartaoCombustivel || "-"}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-[0.78rem] text-muted-foreground">Sem dados do cartão</span>
+                    )}
+                  </div>
                 </TableCell>
-                <TableCell>
+                <TableCell className="align-middle text-center">
                   <div className="flex flex-wrap gap-1">
                     {vehicle.frota && (
-                      <Badge className="bg-chart-4/10 text-chart-4 hover:bg-chart-4/20 text-xs">
+                      <Badge className="bg-chart-4/10 text-chart-4 hover:bg-chart-4/20 text-[0.76rem]">
                         Frota
                       </Badge>
                     )}
                     {vehicle.naOficina && (
-                      <Badge className="bg-chart-3/10 text-chart-3 hover:bg-chart-3/20 text-xs">
+                      <Badge className="bg-chart-3/10 text-chart-3 hover:bg-chart-3/20 text-[0.76rem]">
                         Oficina
                       </Badge>
                     )}
-                    {vehicle.paraRevisao && (
-                      <Badge className="bg-chart-5/10 text-chart-5 hover:bg-chart-5/20 text-xs">
+                    {dueForReview && (
+                      <Badge className="bg-chart-5/10 text-chart-5 hover:bg-chart-5/20 text-[0.76rem]">
                         Revisão
                       </Badge>
                     )}
-                    {!vehicle.frota && !vehicle.naOficina && !vehicle.paraRevisao && (
+                    {!vehicle.frota && !vehicle.naOficina && !dueForReview && (
                       vehicle.colaboradorId ? (
-                        <Badge className="bg-primary/10 text-primary hover:bg-primary/20 text-xs">
+                        <Badge className="bg-primary/10 text-primary hover:bg-primary/20 text-[0.76rem]">
                           Em uso
                         </Badge>
                       ) : (
-                        <Badge className="bg-accent/10 text-accent hover:bg-accent/20 text-xs">
+                        <Badge className="bg-accent/10 text-accent hover:bg-accent/20 text-[0.76rem]">
                           Disponível
                         </Badge>
                       )
                     )}
                   </div>
                 </TableCell>
-                <TableCell className="text-center">
+                <TableCell className="align-middle text-center">
                   {vehicle.semParar ? (
-                    <Badge className="bg-green-100/80 text-green-800 hover:bg-green-100 text-xs font-medium">
+                    <Badge className="bg-green-100/80 text-green-800 hover:bg-green-100 text-[0.76rem] font-medium">
                       Ativo
                     </Badge>
                   ) : (
-                    <span className="text-sm font-medium text-muted-foreground">Não</span>
+                    <span className="text-[0.9rem] font-medium text-muted-foreground">Não</span>
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell className="align-middle text-left">
                   {colaboradorNome ? (
                     <Badge className="bg-primary/10 text-primary hover:bg-primary/20">
                       {colaboradorNome}
                     </Badge>
                   ) : (
-                    <span className="text-sm font-medium text-accent">Disponível</span>
+                    <span className="text-[0.9rem] font-medium text-accent">Disponível</span>
                   )}
                 </TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreHorizontal className="h-4 w-4" />
-                        <span className="sr-only">Abrir menu</span>
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => onEdit(vehicle)}>
-                        <Edit className="mr-2 h-4 w-4" />
-                        Editar
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      {vehicle.colaboradorId ? (
-                        <DropdownMenuItem onClick={() => onUnassign(vehicle)}>
-                          <UserMinus className="mr-2 h-4 w-4" />
-                          Remover Colaborador
+                {canManage ? (
+                  <TableCell className={`sticky right-0 z-10 align-middle text-center shadow-[-1px_0_0_hsl(var(--border))] ${stickyActionClass}`}>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-600 hover:text-violet-700">
+                          <MoreHorizontal className="h-4 w-4" />
+                          <span className="sr-only">Abrir menu</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => onEdit(vehicle)}>
+                          <Edit className="mr-2 h-4 w-4 text-sky-600" />
+                          Editar
                         </DropdownMenuItem>
-                      ) : (
-                        <DropdownMenuItem onClick={() => onAssign(vehicle)}>
-                          <UserPlus className="mr-2 h-4 w-4" />
-                          Atribuir Colaborador
+                        <DropdownMenuSeparator />
+                        {vehicle.colaboradorId ? (
+                          <DropdownMenuItem onClick={() => onUnassign(vehicle)}>
+                            <UserMinus className="mr-2 h-4 w-4 text-amber-600" />
+                            Remover Colaborador
+                          </DropdownMenuItem>
+                        ) : (
+                          <DropdownMenuItem onClick={() => onAssign(vehicle)}>
+                            <UserPlus className="mr-2 h-4 w-4 text-emerald-600" />
+                            Atribuir Colaborador
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => onDelete(vehicle.id)}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4 text-destructive" />
+                          Excluir
                         </DropdownMenuItem>
-                      )}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => onDelete(vehicle.id)}
-                        className="text-destructive focus:text-destructive"
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Excluir
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                ) : null}
               </TableRow>
             )
           })}
         </TableBody>
-      </Table>
+        </Table>
+      </div>
     </div>
   )
 }

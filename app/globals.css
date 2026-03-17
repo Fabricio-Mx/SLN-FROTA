@@ -75,7 +75,7 @@
 }
 
 @theme inline {
-  --font-sans: 'Inter', 'Inter Fallback', sans-serif;
+  --font-sans: var(--font-nunito), 'Nunito', 'Inter', 'Inter Fallback', sans-serif;
   --font-mono: 'Geist Mono', 'Geist Mono Fallback';
   --font-display: var(--font-nunito), 'Nunito', sans-serif;
   --color-background: var(--background);

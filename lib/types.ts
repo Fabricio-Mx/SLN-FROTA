@@ -1,33 +1,52 @@
-export type UserRole = 'mestre' | 'consulta' | 'administrativo' | 'logistico'
+export type UserRole = 'mestre' | 'consulta' | 'administrativo' | 'administrativo_rh' | 'logistico'
 
 export interface AppUser {
   id: string
   email: string
   nome: string
   role: UserRole
+  avatarUrl?: string | null
   isMaster?: boolean
 }
 
-export type EmpresaLocacao = 'localiza' | 'lok_motors' | 'movida' | 'veiculo_sln'
+export type EmpresaLocacao = 'localiza' | 'lok_motors' | 'movida' | 'veiculo_sln' | string
+export type FornecedorProprio =
+  | 'bradesco_financiamento'
+  | 'banco_pan'
+  | 'banco_volkswagen'
+  | 'sisprime_cdc'
+  | string
 
 export interface Vehicle {
   id: string
   placa: string
   chassi: string
+  renavan?: string | null
   modelo: string
   km: number
+  kmUltimaRevisao?: number | null
   mensalidade: number
   dataVencimentoContrato: string
   tipoPropriedade: 'alugado' | 'proprio'
   empresaLocacao?: EmpresaLocacao | null
+  fornecedorProprio?: FornecedorProprio | null
   cartaoCombustivel: 'veloe' | 'ticket' | 'ambos'
+  numeroCartaoCombustivel?: string | null
+  placaCartaoCombustivel?: string | null
   frota: boolean
   naOficina: boolean
   paraRevisao: boolean
   semParar: boolean
-  tipoContratacao?: 'clt' | 'pj' | null
+  tipoContratacao?: 'clt' | 'pj' | string | null
   cpfAgregado?: string | null
   dataVencimentoCNHAgregado?: string | null
+  agregadoColaboradorNome?: string | null
+  agregadoFuncao?: string | null
+  agregadoContrato?: string | null
+  agregadoCentroCusto?: string | null
+  agregadoAnoModelo?: string | null
+  agregadoDataInicial?: string | null
+  agregadoDias?: number | null
   colaboradorId?: string | null
   imagens?: DriveFile[]
   checklists?: DriveFile[]
@@ -42,10 +61,13 @@ export interface Colaborador {
   nome: string
   cpf: string
   telefone: string
+  email: string
   departamento: string
+  cep: string
+  endereco: string
   dataVencimentoCNH: string
   documentos?: DriveFile[]
-  checklist?: ColaboradorChecklist
+  imagensVeiculo?: DriveFile[]
   createdAt: string
   updatedAt: string
 }
@@ -59,23 +81,46 @@ export interface DriveFile {
   size?: string | null
 }
 
-export interface ColaboradorChecklist {
-  frontal?: DriveFile
-  direita?: DriveFile
-  esquerda?: DriveFile
-  traseira?: DriveFile
-  avarias?: ColaboradorAvaria[]
-}
-
-export interface ColaboradorAvaria {
-  file: DriveFile
-  descricao: string
-}
-
 export type ColaboradorFormData = Omit<Colaborador, 'id' | 'createdAt' | 'updatedAt'>
+
+export type MultaGravidade = 'leve' | 'media' | 'grave' | 'gravissima'
+export type MultaStatus = 'pendente' | 'enviado'
+export type MultaIndicacaoStatus = 'sim' | 'expirado'
+export type MultaRhStatus = 'pendente' | 'pago'
+export type MultaColaboradorStatus = 'ativo' | 'desligado'
+
+export interface Multa {
+  id: string
+  vehicleId?: string | null
+  colaboradorId?: string | null
+  dataHoraInfracao: string
+  placa: string
+  condutor: string
+  tipo: string
+  gravidade: MultaGravidade
+  pontos: number
+  autoInfracao: string
+  valor: number
+  dataLimiteIndicar: string
+  status: MultaStatus
+  indicacaoStatus: MultaIndicacaoStatus
+  colaboradorStatus?: MultaColaboradorStatus | null
+  statusEnviadoEm?: string | null
+  rhStatus: MultaRhStatus
+  rhPagoEm?: string | null
+  valorNic?: number | null
+  valorTotalDesconto?: number | null
+  locadora: string
+  observacoes: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type MultaFormData = Omit<Multa, 'id' | 'createdAt' | 'updatedAt'>
 
 export interface VehicleFilters {
   search: string
+  searchScope: 'todos' | 'placa_veiculo' | 'placa_cartao'
   tipoPropriedade: 'todos' | 'alugado' | 'proprio'
   cartaoCombustivel: 'todos' | 'veloe' | 'ticket' | 'ambos'
   atribuicao: 'todos' | 'atribuido' | 'disponivel'

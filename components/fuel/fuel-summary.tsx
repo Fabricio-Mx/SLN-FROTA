@@ -4,7 +4,8 @@ import { useMemo, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useFuelData } from "@/hooks/use-fuel-data"
+import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
+import { parseFuelDateTime } from "@/lib/fuel-datetime"
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -17,6 +18,13 @@ function formatDateBr(date: Date): string {
   return new Intl.DateTimeFormat("pt-BR").format(date)
 }
 
+function formatMonthYearBr(date: Date): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    month: "long",
+    year: "numeric",
+  }).format(date)
+}
+
 function toDateOnly(value: string): Date | null {
   if (!value) return null
   const [year, month, day] = value.split("-").map(Number)
@@ -25,7 +33,7 @@ function toDateOnly(value: string): Date | null {
 }
 
 export function FuelSummary() {
-  const { records, dailyTotal, weeklyTotal, monthlyTotal, monthlyCount, reportDate } = useFuelData()
+  const { records, dailyTotal, weeklyTotal, monthlyTotal, monthlyCount, reportDate, monthlyReferenceDate } = useFuelDataContext()
   const [selectedDay, setSelectedDay] = useState("")
   const [rangeStart, setRangeStart] = useState("")
   const [rangeEnd, setRangeEnd] = useState("")
@@ -44,7 +52,7 @@ export function FuelSummary() {
     }
 
     for (const record of records) {
-      const recordDate = new Date(record.dateTime)
+      const recordDate = parseFuelDateTime(record.dateTime)
       if (Number.isNaN(recordDate.getTime())) continue
 
       if (
@@ -95,7 +103,7 @@ export function FuelSummary() {
           />
         </div>
         <div className="space-y-1">
-          <Label htmlFor="fuel-range-end">Ate</Label>
+          <Label htmlFor="fuel-range-end">Até</Label>
           <Input
             id="fuel-range-end"
             type="date"
@@ -137,7 +145,7 @@ export function FuelSummary() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold">{formatCurrency(monthlyTotal)}</div>
-            <p className="text-xs text-muted-foreground">Acumulado do mês</p>
+            <p className="text-xs text-muted-foreground">Acumulado de {formatMonthYearBr(monthlyReferenceDate)}</p>
           </CardContent>
         </Card>
         <Card>

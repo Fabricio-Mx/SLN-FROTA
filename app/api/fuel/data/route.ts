@@ -1,135 +1,314 @@
 import { NextResponse } from "next/server"
-import { google } from "googleapis"
-import { createAdminClient } from "@/lib/supabase/admin"
+import {
+  getFuelMonthKey,
+  getFuelMonthOptions,
+  getFuelRecordsForMonth,
+  readLocalFuelData,
+  readLocalFuelHistory,
+  reconcileFuelMonths,
+  saveLocalFuelData,
+  saveLocalFuelHistory,
+  sanitizeFuelStorage,
+  type FuelMonthArchive,
+  type FuelRecord,
+} from "@/lib/fuel-storage"
+import {
+  ensureFolder,
+  findFile,
+  getDriveClients,
+  getDriveRootFolderId,
+  isDriveConfigured,
+  readJsonFile,
+  upsertJsonFile,
+} from "@/lib/google-drive"
+import { parseFuelDateTime } from "@/lib/fuel-datetime"
 
 export const runtime = "nodejs"
 
-const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
-const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
-const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
-const GOOGLE_OAUTH_REDIRECT_URL = process.env.GOOGLE_OAUTH_REDIRECT_URL
 const FUEL_FOLDER_NAME = "combustivel"
 const FUEL_DATA_FILE = "fuel_data.json"
+const FUEL_HISTORY_FILE = "fuel_history.json"
+const WEEKLY_COMPARISON_COLORS = ["#4E8F57", "#4F9BC9", "#D89A4A", "#D86C61"]
+const FUEL_CACHE_TTL_MS = 60_000
 
-function getOAuthClient() {
-  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !GOOGLE_OAUTH_REDIRECT_URL) {
-    throw new Error("Google OAuth nao configurado.")
-  }
+let fuelDataCache:
+  | {
+      cachedAt: number
+      currentRecords: FuelRecord[]
+      history: FuelMonthArchive[]
+      loadedFromDrive: boolean
+    }
+  | null = null
 
-  return new google.auth.OAuth2(
-    GOOGLE_OAUTH_CLIENT_ID,
-    GOOGLE_OAUTH_CLIENT_SECRET,
-    GOOGLE_OAUTH_REDIRECT_URL
-  )
+type WeeklyComparisonMonth = {
+  key: string
+  label: string
+  color: string
 }
 
-async function getStoredRefreshToken() {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from("drive_tokens")
-    .select("refresh_token")
-    .eq("id", "default")
-    .maybeSingle()
+type WeeklyComparisonPoint = {
+  weekLabel: string
+} & Record<string, string | number>
 
-  if (error) {
-    throw new Error("Falha ao carregar token do Drive.")
-  }
-
-  return data?.refresh_token || null
+function normalizeDuplicateToken(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
 }
 
-async function getDriveClient() {
-  if (!DRIVE_FOLDER_ID) {
-    throw new Error("Drive folder id nao configurado.")
-  }
+function buildDuplicateMinuteKey(value: string): string {
+  const date = parseFuelDateTime(value)
+  if (Number.isNaN(date.getTime())) return value.slice(0, 16)
 
-  const refreshToken = await getStoredRefreshToken()
-  if (!refreshToken) {
-    throw new Error("Drive nao autorizado. Acesse /api/drive/oauth/start.")
-  }
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, "0")
+  const day = `${date.getDate()}`.padStart(2, "0")
+  const hour = `${date.getHours()}`.padStart(2, "0")
+  const minute = `${date.getMinutes()}`.padStart(2, "0")
 
-  const auth = getOAuthClient()
-  auth.setCredentials({ refresh_token: refreshToken })
-
-  return google.drive({ version: "v3", auth })
+  return `${year}-${month}-${day} ${hour}:${minute}`
 }
 
-async function ensureFolder(drive: ReturnType<typeof google.drive>, name: string, parentId: string) {
-  const q = [
-    "mimeType='application/vnd.google-apps.folder'",
-    `name='${name.replace(/'/g, "\\'")}'`,
-    `'${parentId}' in parents`,
-    "trashed=false",
-  ].join(" and ")
+function scoreApiFuelRecord(record: FuelRecord): number {
+  let score = 0
 
-  const list = await drive.files.list({
-    q,
-    fields: "files(id, name)",
-  })
+  if (record.cardPlate.trim()) score += 2
+  if (record.cpfMotorista.trim()) score += 3
+  if (record.nomeMotorista.trim()) score += 2
+  if (!normalizeDuplicateToken(record.nomeMotorista).includes("veiculo sem motorista")) score += 1
+  if (record.dateTime.length >= 19) score += 1
 
-  if (list.data.files && list.data.files.length > 0) {
-    return list.data.files[0].id as string
-  }
-
-  const created = await drive.files.create({
-    requestBody: {
-      name,
-      mimeType: "application/vnd.google-apps.folder",
-      parents: [parentId],
-    },
-    fields: "id",
-  })
-
-  return created.data.id as string
+  return score
 }
 
-async function findFile(drive: ReturnType<typeof google.drive>, name: string, parentId: string) {
-  const q = [
-    `name='${name.replace(/'/g, "\\'")}'`,
-    `'${parentId}' in parents`,
-    "trashed=false",
-  ].join(" and ")
+function collapseFuelRecords(records: FuelRecord[]): FuelRecord[] {
+  const deduped = new Map<string, FuelRecord>()
 
-  const list = await drive.files.list({
-    q,
-    fields: "files(id, name)",
-  })
+  for (const record of records) {
+    const key = [
+      normalizeDuplicateToken(record.cardPlate),
+      normalizeDuplicateToken(record.tipoCombustivel),
+      Number(record.valor.toFixed(2)),
+      buildDuplicateMinuteKey(record.dateTime),
+    ].join("|")
 
-  return list.data.files?.[0] || null
-}
-
-async function readFuelData(drive: ReturnType<typeof google.drive>, fileId: string) {
-  const response = await drive.files.get(
-    { fileId, alt: "media" },
-    { responseType: "arraybuffer" }
-  )
-
-  const buffer = Buffer.from(response.data as ArrayBuffer)
-  const text = buffer.toString("utf-8")
-  if (!text) return []
-
-  try {
-    const parsed = JSON.parse(text)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-export async function GET() {
-  try {
-    const drive = await getDriveClient()
-    const rootId = DRIVE_FOLDER_ID as string
-    const fuelFolderId = await ensureFolder(drive, FUEL_FOLDER_NAME, rootId)
-    const file = await findFile(drive, FUEL_DATA_FILE, fuelFolderId)
-
-    if (!file?.id) {
-      return NextResponse.json({ records: [] })
+    const current = deduped.get(key)
+    if (!current) {
+      deduped.set(key, record)
+      continue
     }
 
-    const records = await readFuelData(drive, file.id)
-    return NextResponse.json({ records })
+    deduped.set(key, scoreApiFuelRecord(record) >= scoreApiFuelRecord(current) ? record : current)
+  }
+
+  return Array.from(deduped.values()).sort((left, right) => left.dateTime.localeCompare(right.dateTime))
+}
+
+function buildWeeklyComparison(currentRecords: FuelRecord[], history: FuelMonthArchive[]) {
+  const allMonths = getFuelMonthOptions(currentRecords, history).slice(0, 3).reverse()
+  const months: WeeklyComparisonMonth[] = allMonths.map((month, index) => ({
+    key: month.month,
+    label: month.label,
+    color: WEEKLY_COMPARISON_COLORS[index % WEEKLY_COMPARISON_COLORS.length],
+  }))
+
+  const points: WeeklyComparisonPoint[] = Array.from({ length: 5 }, (_, index) => ({
+    weekLabel: `Semana ${index + 1}`,
+  }))
+
+  for (const month of months) {
+    const monthRecords = getFuelRecordsForMonth(month.key, currentRecords, history)
+
+    for (const record of monthRecords) {
+      const recordDate = parseFuelDateTime(record.dateTime)
+      if (Number.isNaN(recordDate.getTime())) continue
+
+      const weekIndex = Math.min(4, Math.floor((recordDate.getDate() - 1) / 7))
+      const currentValue = Number(points[weekIndex][month.key] ?? 0)
+      points[weekIndex][month.key] = currentValue + record.valor
+    }
+  }
+
+  return { months, points }
+}
+
+function parseDateParam(value: string | null): Date | null {
+  if (!value) return null
+
+  const [year, month, day] = value.split("-").map(Number)
+  if (!year || !month || !day) return null
+
+  return new Date(year, month - 1, day)
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function endOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999)
+}
+
+function getAllFuelRecords(currentRecords: FuelRecord[], history: FuelMonthArchive[]): FuelRecord[] {
+  return collapseFuelRecords([...currentRecords, ...history.flatMap((month) => month.records)])
+}
+
+function filterFuelRecordsByRange(records: FuelRecord[], start: Date, end: Date): FuelRecord[] {
+  const normalizedStart = start <= end ? startOfDay(start) : startOfDay(end)
+  const normalizedEnd = start <= end ? endOfDay(end) : endOfDay(start)
+
+  return records.filter((record) => {
+    const recordDate = parseFuelDateTime(record.dateTime)
+    if (Number.isNaN(recordDate.getTime())) return false
+
+    return recordDate >= normalizedStart && recordDate <= normalizedEnd
+  })
+}
+
+function readFuelCache() {
+  if (!fuelDataCache) return null
+  if (Date.now() - fuelDataCache.cachedAt > FUEL_CACHE_TTL_MS) return null
+  return fuelDataCache
+}
+
+function writeFuelCache(currentRecords: FuelRecord[], history: FuelMonthArchive[], loadedFromDrive: boolean) {
+  fuelDataCache = {
+    cachedAt: Date.now(),
+    currentRecords,
+    history,
+    loadedFromDrive,
+  }
+}
+
+async function syncFuelFilesToDrive(currentRecords: FuelRecord[], history: FuelMonthArchive[]) {
+  try {
+    const rootId = getDriveRootFolderId()
+    const driveClients = await getDriveClients()
+
+    for (const drive of driveClients) {
+      try {
+        const fuelFolderId = await ensureFolder(drive, FUEL_FOLDER_NAME, rootId)
+        await upsertJsonFile(drive, fuelFolderId, FUEL_DATA_FILE, currentRecords)
+        await upsertJsonFile(drive, fuelFolderId, FUEL_HISTORY_FILE, history)
+        return true
+      } catch {
+        // Tenta o próximo cliente de autenticação.
+      }
+    }
+  } catch {
+    // Mantem apenas o espelho local.
+  }
+
+  return false
+}
+
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url)
+    const requestedMonth = url.searchParams.get("month")
+    const requestedStart = parseDateParam(url.searchParams.get("start"))
+    const requestedEnd = parseDateParam(url.searchParams.get("end"))
+    const currentMonthKey = getFuelMonthKey(new Date())
+    const driveConfigured = isDriveConfigured()
+    const cached = readFuelCache()
+    let currentRecords: FuelRecord[]
+    let history: FuelMonthArchive[]
+    let loadedFromDrive: boolean
+
+    if (cached) {
+      currentRecords = cached.currentRecords
+      history = cached.history
+      loadedFromDrive = cached.loadedFromDrive
+    } else {
+      currentRecords = await readLocalFuelData()
+      history = await readLocalFuelHistory()
+      loadedFromDrive = false
+
+      try {
+        const rootId = getDriveRootFolderId()
+        const driveClients = await getDriveClients()
+
+        for (const drive of driveClients) {
+          try {
+            const fuelFolderId = await ensureFolder(drive, FUEL_FOLDER_NAME, rootId)
+            const currentFile = await findFile(drive, FUEL_DATA_FILE, fuelFolderId)
+            const historyFile = await findFile(drive, FUEL_HISTORY_FILE, fuelFolderId)
+
+            const driveCurrent = currentFile?.id ? await readJsonFile<FuelRecord[]>(drive, currentFile.id) : []
+            const driveHistory = historyFile?.id ? await readJsonFile<FuelMonthArchive[]>(drive, historyFile.id) : []
+
+            if (currentFile?.id || historyFile?.id) {
+              currentRecords = Array.isArray(driveCurrent) ? driveCurrent : []
+              history = Array.isArray(driveHistory) ? driveHistory : []
+              await saveLocalFuelData(currentRecords)
+              await saveLocalFuelHistory(history)
+              loadedFromDrive = true
+              break
+            }
+          } catch {
+            // Tenta o proximo cliente de autenticacao.
+          }
+        }
+      } catch {
+        // Cai para o espelho local abaixo.
+      }
+
+      writeFuelCache(currentRecords, history, loadedFromDrive)
+    }
+
+    const sanitized = sanitizeFuelStorage(currentRecords, history)
+    currentRecords = collapseFuelRecords(sanitized.currentRecords)
+    history = sanitized.history.map((month) => ({
+      ...month,
+      records: collapseFuelRecords(month.records),
+    }))
+
+    const reconciled = reconcileFuelMonths(currentRecords, history)
+    currentRecords = reconciled.currentRecords
+    history = reconciled.history
+
+    if (sanitized.removedCurrent > 0 || sanitized.removedHistory > 0 || reconciled.archivedMonths.length > 0) {
+      await saveLocalFuelData(currentRecords)
+      await saveLocalFuelHistory(history)
+      await syncFuelFilesToDrive(currentRecords, history)
+      writeFuelCache(currentRecords, history, loadedFromDrive)
+    }
+
+    const availableMonths = getFuelMonthOptions(currentRecords, history)
+    const selectedMonth =
+      requestedMonth && availableMonths.some((month) => month.month === requestedMonth)
+        ? requestedMonth
+        : currentMonthKey
+
+    const records =
+      requestedStart && requestedEnd
+        ? filterFuelRecordsByRange(getAllFuelRecords(currentRecords, history), requestedStart, requestedEnd)
+        : selectedMonth
+          ? getFuelRecordsForMonth(selectedMonth, currentRecords, history)
+          : []
+    const weeklyComparison = buildWeeklyComparison(currentRecords, history)
+    const hasHistory = availableMonths.some((month) => month.recordCount > 0)
+    const warning =
+      records.length === 0 && !hasHistory
+        ? "Nenhum relatório importado ainda. O sistema vai arquivar automaticamente cada mês fechado."
+        : driveConfigured && !loadedFromDrive && currentRecords.length > 0
+          ? "Dados carregados do espelho local. Verifique o acesso da conta de serviço ao Drive."
+          : undefined
+
+    return NextResponse.json({
+      records,
+      warning,
+      availableMonths,
+      weeklyComparison,
+      selectedMonth,
+      currentMonth: currentMonthKey,
+    })
   } catch (err) {
+    console.error("[fuel/data] unexpected error", err)
+
     const message = err instanceof Error ? err.message : "Erro desconhecido"
     return NextResponse.json({ error: message }, { status: 500 })
   }

@@ -1,6 +1,6 @@
 "use client"
 
-import { Search, Filter, X, AlertTriangle, Wrench, Settings, Car, CreditCard, Users, Truck, AlertCircle, CheckCircle2, ArrowUp } from "lucide-react"
+import { Search, Filter, X, AlertTriangle, Wrench, Settings, CarFront, CreditCard, Users, Truck, CheckCircle2, ArrowUp } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -26,6 +26,7 @@ interface FiltersProps {
 
 const defaultFilters: VehicleFilters = {
   search: "",
+  searchScope: "todos",
   tipoPropriedade: "todos",
   cartaoCombustivel: "todos",
   atribuicao: "todos",
@@ -33,8 +34,53 @@ const defaultFilters: VehicleFilters = {
   situacao: "todos",
 }
 
+const quickFilterBaseClass = "h-9 rounded-lg border px-3.5 text-[0.85rem] font-medium gap-1.5 shadow-sm transition-colors"
+
+function getQuickFilterClass(active: boolean, palette: string) {
+  if (palette === "blue") {
+    return active
+      ? "bg-blue-600 text-white hover:bg-blue-700 border-blue-600"
+      : "border-blue-200 text-blue-700 hover:bg-blue-50 hover:text-blue-700"
+  }
+
+  if (palette === "green") {
+    return active
+      ? "bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600"
+      : "border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-700"
+  }
+
+  if (palette === "red") {
+    return active
+      ? "bg-rose-600 text-white hover:bg-rose-700 border-rose-600"
+      : "border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-700"
+  }
+
+  if (palette === "orange") {
+    return active
+      ? "bg-orange-500 text-white hover:bg-orange-600 border-orange-500"
+      : "border-orange-200 text-orange-700 hover:bg-orange-50 hover:text-orange-700"
+  }
+
+  if (palette === "violet") {
+    return active
+      ? "bg-violet-500 text-white hover:bg-violet-600 border-violet-500"
+      : "border-violet-200 text-violet-700 hover:bg-violet-50 hover:text-violet-700"
+  }
+
+  if (palette === "pink") {
+    return active
+      ? "bg-pink-600 text-white hover:bg-pink-700 border-pink-600"
+      : "border-pink-200 text-pink-700 hover:bg-pink-50 hover:text-pink-700"
+  }
+
+  return active
+    ? "bg-primary text-primary-foreground hover:bg-primary/90 border-primary"
+    : "border-border text-foreground hover:bg-muted"
+}
+
 export function Filters({ filters, onFiltersChange }: FiltersProps) {
   const activeFiltersCount = [
+    filters.searchScope !== "todos",
     filters.tipoPropriedade !== "todos",
     filters.cartaoCombustivel !== "todos",
     filters.atribuicao !== "todos",
@@ -46,24 +92,49 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
     onFiltersChange({ ...defaultFilters, search: filters.search })
   }
 
+  const searchPlaceholder =
+    filters.searchScope === "placa_veiculo"
+      ? "Buscar pela placa do veículo..."
+      : filters.searchScope === "placa_cartao"
+      ? "Buscar pela placa registrada no cartão..."
+      : "Buscar por placa do veículo, placa do cartão, chassi ou modelo..."
+
   return (
     <div className="space-y-4">
       {/* Barra de busca e filtro principal */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <Select
+          value={filters.searchScope}
+          onValueChange={(value) =>
+            onFiltersChange({
+              ...filters,
+              searchScope: value as VehicleFilters["searchScope"],
+            })
+          }
+        >
+          <SelectTrigger className="h-11 w-full text-[0.95rem] sm:w-[220px] bg-transparent">
+            <SelectValue placeholder="Buscar em" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Busca inteligente</SelectItem>
+            <SelectItem value="placa_veiculo">Placa do veículo</SelectItem>
+            <SelectItem value="placa_cartao">Placa do cartão</SelectItem>
+          </SelectContent>
+        </Select>
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Buscar por placa, chassi ou modelo..."
+            placeholder={searchPlaceholder}
             value={filters.search}
             onChange={(e) => onFiltersChange({ ...filters, search: e.target.value })}
-            className="pl-9"
+            className="h-11 pl-10 text-[0.95rem]"
           />
         </div>
         
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" className="gap-2 bg-transparent">
-              <Filter className="h-4 w-4" />
+            <Button variant="outline" className="h-11 gap-2 px-4 text-[0.95rem] bg-transparent">
+              <Filter className="h-4.5 w-4.5" />
               Filtros
               {activeFiltersCount > 0 && (
                 <Badge className="ml-1 h-5 w-5 rounded-full p-0 text-xs">
@@ -72,15 +143,15 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
               )}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-80 p-4" align="end">
+          <PopoverContent className="w-[22rem] p-4" align="end">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h4 className="font-medium text-sm">Filtros Avançados</h4>
+                <h4 className="font-medium text-[0.95rem]">Filtros Avançados</h4>
                 {activeFiltersCount > 0 && (
                   <Button 
                     variant="ghost" 
                     size="sm" 
-                    className="h-auto p-1 text-xs text-muted-foreground"
+                    className="h-auto p-1 text-[0.82rem] text-muted-foreground"
                     onClick={clearFilters}
                   >
                     Limpar filtros
@@ -92,8 +163,33 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
               
               {/* Propriedade */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-                  <Car className="h-3 w-3" />
+                <label className="text-[0.82rem] font-medium text-muted-foreground flex items-center gap-2">
+                  <Search className="h-3 w-3" />
+                  Buscar em
+                </label>
+                <Select
+                  value={filters.searchScope}
+                  onValueChange={(value) =>
+                    onFiltersChange({
+                      ...filters,
+                      searchScope: value as VehicleFilters["searchScope"],
+                    })
+                  }
+                >
+                  <SelectTrigger className="h-10 text-[0.92rem]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Busca inteligente</SelectItem>
+                    <SelectItem value="placa_veiculo">Placa do veículo</SelectItem>
+                    <SelectItem value="placa_cartao">Placa do cartão</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[0.82rem] font-medium text-muted-foreground flex items-center gap-2">
+                  <CarFront className="h-3 w-3" />
                   Tipo de Propriedade
                 </label>
                 <Select
@@ -105,7 +201,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
                     })
                   }
                 >
-                  <SelectTrigger className="h-9">
+                  <SelectTrigger className="h-10 text-[0.92rem]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -118,7 +214,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
               
               {/* Cartão Combustível */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                <label className="text-[0.82rem] font-medium text-muted-foreground flex items-center gap-2">
                   <CreditCard className="h-3 w-3" />
                   Cartão Combustível
                 </label>
@@ -131,7 +227,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
                     })
                   }
                 >
-                  <SelectTrigger className="h-9">
+                  <SelectTrigger className="h-10 text-[0.92rem]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -145,7 +241,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
               
               {/* Atribuição */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                <label className="text-[0.82rem] font-medium text-muted-foreground flex items-center gap-2">
                   <Users className="h-3 w-3" />
                   Atribuição
                 </label>
@@ -158,7 +254,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
                     })
                   }
                 >
-                  <SelectTrigger className="h-9">
+                  <SelectTrigger className="h-10 text-[0.92rem]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -171,7 +267,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
               
               {/* Status Veículo */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                <label className="text-[0.82rem] font-medium text-muted-foreground flex items-center gap-2">
                   <Truck className="h-3 w-3" />
                   Status do Veículo
                 </label>
@@ -206,21 +302,46 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
         <Button
           variant={filters.situacao === "todos" ? "default" : "outline"}
           size="sm"
-          className="h-7 text-xs gap-1.5"
+          className={`${quickFilterBaseClass} ${getQuickFilterClass(filters.situacao === "todos", "blue")}`}
           onClick={() => onFiltersChange({ ...filters, situacao: "todos" })}
         >
           Todos
+        </Button>
+        <Separator orientation="vertical" className="h-5 mx-1" />
+        <Button
+          variant={filters.tipoPropriedade === "proprio" ? "default" : "outline"}
+          size="sm"
+          className={`${quickFilterBaseClass} ${getQuickFilterClass(filters.tipoPropriedade === "proprio", "green")}`}
+          onClick={() =>
+            onFiltersChange({
+              ...filters,
+              tipoPropriedade: filters.tipoPropriedade === "proprio" ? "todos" : "proprio",
+            })
+          }
+        >
+          <CarFront className="h-3 w-3" />
+          Próprios
+        </Button>
+        <Button
+          variant={filters.tipoPropriedade === "alugado" ? "default" : "outline"}
+          size="sm"
+          className={`${quickFilterBaseClass} ${getQuickFilterClass(filters.tipoPropriedade === "alugado", "blue")}`}
+          onClick={() =>
+            onFiltersChange({
+              ...filters,
+              tipoPropriedade: filters.tipoPropriedade === "alugado" ? "todos" : "alugado",
+            })
+          }
+        >
+          <Truck className="h-3 w-3" />
+          Alugados
         </Button>
         <Separator orientation="vertical" className="h-5 mx-1" />
         {/* Removido texto 'Disponibilidade:' */}
         <Button
           variant={filters.atribuicao === "disponivel" ? "default" : "outline"}
           size="sm"
-          className={`h-7 text-xs gap-1.5 ${
-            filters.atribuicao !== "disponivel"
-              ? "border-green-500/50 text-green-700 hover:bg-green-100 hover:text-green-700"
-              : "bg-green-600 hover:bg-green-700 text-white"
-          }`}
+          className={`${quickFilterBaseClass} ${getQuickFilterClass(filters.atribuicao === "disponivel", "green")}`}
           onClick={() =>
             onFiltersChange({
               ...filters,
@@ -234,11 +355,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
         <Button
           variant={filters.situacao === "contrato_vencendo" ? "default" : "outline"}
           size="sm"
-          className={`h-7 text-xs gap-1.5 ${
-            filters.situacao !== "contrato_vencendo" 
-              ? "border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive" 
-              : "bg-destructive hover:bg-destructive/90"
-          }`}
+          className={`${quickFilterBaseClass} ${getQuickFilterClass(filters.situacao === "contrato_vencendo", "red")}`}
           onClick={() => onFiltersChange({ ...filters, situacao: "contrato_vencendo" })}
         >
           <AlertTriangle className="h-3 w-3" />
@@ -247,11 +364,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
         <Button
           variant={filters.situacao === "na_oficina" ? "default" : "outline"}
           size="sm"
-          className={`h-7 text-xs gap-1.5 ${
-            filters.situacao !== "na_oficina" 
-              ? "border-chart-3/50 text-chart-3 hover:bg-chart-3/10 hover:text-chart-3" 
-              : "bg-chart-3 hover:bg-chart-3/90"
-          }`}
+          className={`${quickFilterBaseClass} ${getQuickFilterClass(filters.situacao === "na_oficina", "orange")}`}
           onClick={() => onFiltersChange({ ...filters, situacao: "na_oficina" })}
         >
           <Wrench className="h-3 w-3" />
@@ -260,11 +373,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
         <Button
           variant={filters.situacao === "para_revisao" ? "default" : "outline"}
           size="sm"
-          className={`h-7 text-xs gap-1.5 ${
-            filters.situacao !== "para_revisao" 
-              ? "border-chart-4/50 text-chart-4 hover:bg-chart-4/10 hover:text-chart-4" 
-              : "bg-chart-4 hover:bg-chart-4/90"
-          }`}
+          className={`${quickFilterBaseClass} ${getQuickFilterClass(filters.situacao === "para_revisao", "violet")}`}
           onClick={() => onFiltersChange({ ...filters, situacao: "para_revisao" })}
         >
           <Settings className="h-3 w-3" />
@@ -273,11 +382,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
         <Button
           variant={filters.situacao === "sem_parar" ? "default" : "outline"}
           size="sm"
-          className={`h-7 text-xs gap-1.5 ${
-            filters.situacao !== "sem_parar" 
-              ? "border-pink-500/50 text-pink-700 hover:bg-pink-100 hover:text-pink-700" 
-              : "bg-pink-600 hover:bg-pink-700 text-white"
-          }`}
+          className={`${quickFilterBaseClass} ${getQuickFilterClass(filters.situacao === "sem_parar", "pink")}`}
           onClick={() => onFiltersChange({ ...filters, situacao: "sem_parar" })}
         >
           {/* Ícone de seta para cima para o Sem Parar */}
@@ -292,7 +397,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-xs gap-1.5 text-muted-foreground"
+              className="h-8 rounded-lg px-3 text-xs font-medium gap-1.5 text-muted-foreground"
               onClick={clearFilters}
             >
               <X className="h-3 w-3" />

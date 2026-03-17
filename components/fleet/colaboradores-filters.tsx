@@ -27,14 +27,14 @@ export function ColaboradoresFilters({ filters, onFiltersChange }: Colaboradores
     <div className="space-y-4">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Buscar por nome, CPF ou telefone..."
             value={filters.search}
             onChange={(e) =>
               onFiltersChange({ ...filters, search: e.target.value })
             }
-            className="pl-9"
+            className="h-11 pl-10 text-[0.95rem]"
           />
         </div>
         
@@ -48,8 +48,8 @@ export function ColaboradoresFilters({ filters, onFiltersChange }: Colaboradores
               })
             }
           >
-            <SelectTrigger className="w-[200px]">
-              <ArrowUpDown className="mr-2 h-4 w-4" />
+            <SelectTrigger className="h-11 w-[220px] text-[0.95rem]">
+              <ArrowUpDown className="mr-2 h-4.5 w-4.5" />
               <SelectValue placeholder="Ordenar por" />
             </SelectTrigger>
             <SelectContent>
@@ -68,7 +68,7 @@ export function ColaboradoresFilters({ filters, onFiltersChange }: Colaboradores
               })
             }
           >
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="h-11 w-[190px] text-[0.95rem]">
               <SelectValue placeholder="Status CNH" />
             </SelectTrigger>
             <SelectContent>
@@ -87,7 +87,7 @@ export function ColaboradoresFilters({ filters, onFiltersChange }: Colaboradores
           variant={filters.statusCNH === "todos" ? "default" : "outline"}
           size="sm"
           onClick={() => onFiltersChange({ ...filters, statusCNH: "todos" })}
-          className="gap-2"
+          className="h-9 gap-2 px-3.5 text-[0.9rem]"
         >
           Todos
         </Button>
@@ -95,7 +95,7 @@ export function ColaboradoresFilters({ filters, onFiltersChange }: Colaboradores
           variant={filters.statusCNH === "vencida" ? "default" : "outline"}
           size="sm"
           onClick={() => onFiltersChange({ ...filters, statusCNH: "vencida" })}
-          className={`gap-2 ${filters.statusCNH === "vencida" ? "bg-destructive hover:bg-destructive/90" : "text-destructive border-destructive/30 hover:bg-destructive/10"}`}
+          className={`h-9 gap-2 px-3.5 text-[0.9rem] ${filters.statusCNH === "vencida" ? "bg-destructive hover:bg-destructive/90" : "text-destructive border-destructive/30 hover:bg-destructive/10"}`}
         >
           <AlertTriangle className="h-4 w-4" />
           CNH Vencida
@@ -104,7 +104,7 @@ export function ColaboradoresFilters({ filters, onFiltersChange }: Colaboradores
           variant={filters.statusCNH === "vencendo" ? "default" : "outline"}
           size="sm"
           onClick={() => onFiltersChange({ ...filters, statusCNH: "vencendo" })}
-          className={`gap-2 ${filters.statusCNH === "vencendo" ? "bg-chart-3 hover:bg-chart-3/90" : "text-chart-3 border-chart-3/30 hover:bg-chart-3/10"}`}
+          className={`h-9 gap-2 px-3.5 text-[0.9rem] ${filters.statusCNH === "vencendo" ? "bg-chart-3 hover:bg-chart-3/90" : "text-chart-3 border-chart-3/30 hover:bg-chart-3/10"}`}
         >
           <Clock className="h-4 w-4" />
           CNH Vencendo (30 dias)
@@ -113,7 +113,7 @@ export function ColaboradoresFilters({ filters, onFiltersChange }: Colaboradores
           variant={filters.statusCNH === "valida" ? "default" : "outline"}
           size="sm"
           onClick={() => onFiltersChange({ ...filters, statusCNH: "valida" })}
-          className={`gap-2 ${filters.statusCNH === "valida" ? "bg-accent hover:bg-accent/90" : "text-accent border-accent/30 hover:bg-accent/10"}`}
+          className={`h-9 gap-2 px-3.5 text-[0.9rem] ${filters.statusCNH === "valida" ? "bg-accent hover:bg-accent/90" : "text-accent border-accent/30 hover:bg-accent/10"}`}
         >
           <CheckCircle className="h-4 w-4" />
           CNH Válida
