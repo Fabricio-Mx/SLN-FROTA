@@ -7,6 +7,7 @@ import { getCostCenterBaseKey, preferCostCenterLabel, resolveCostCenterRecord, n
 import { FuelCostCenterEditor } from "@/components/fuel/fuel-cost-center-editor"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { useFuelCostCenters } from "@/hooks/use-fuel-cost-centers"
+import type { FuelRecord } from "@/hooks/use-fuel-data"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
@@ -121,16 +122,22 @@ function formatDateTime(value: string): string {
   }).format(date)
 }
 
-export function FuelCostCenterInsights() {
+type FuelCostCenterInsightsProps = {
+  records?: FuelRecord[]
+  description?: string
+}
+
+export function FuelCostCenterInsights({ records: scopedRecords, description }: FuelCostCenterInsightsProps = {}) {
   const { records, selectedMonth, availableMonths } = useFuelDataContext()
   const { lookup } = useFuelCostCenters()
   const [editingDriver, setEditingDriver] = useState<DriverSummary | null>(null)
   const [selectedSupervisor, setSelectedSupervisor] = useState("todos")
   const [selectedCoordenador, setSelectedCoordenador] = useState("todos")
   const [selectedCenterKey, setSelectedCenterKey] = useState<string | null>(null)
+  const recordsToAnalyze = scopedRecords ?? records
 
   const enrichedRecords = useMemo<EnrichedCostCenterRecord[]>(() => {
-    return records.map((record) => {
+    return recordsToAnalyze.map((record) => {
       const costCenterRecord = resolveCostCenterRecord(record.nomeMotorista, lookup)
 
       return {
@@ -140,7 +147,7 @@ export function FuelCostCenterInsights() {
         coordenador: costCenterRecord?.coordenador ?? "",
       }
     })
-  }, [lookup, records])
+  }, [lookup, recordsToAnalyze])
 
   const supervisorOptions = useMemo(() => {
     return Array.from(new Set(enrichedRecords.map((record) => record.supervisor).filter(Boolean))).sort((left, right) =>
@@ -292,7 +299,7 @@ export function FuelCostCenterInsights() {
           <div>
             <CardTitle className="text-xl text-slate-900">Cobertura do centro de custo</CardTitle>
             <CardDescription>
-              Resumo do mês {selectedMonthOption?.label ?? "selecionado"} com os motoristas cruzados pela planilha de centro de custo.
+              {description ?? `Resumo do mês ${selectedMonthOption?.label ?? "selecionado"} com os motoristas cruzados pela planilha de centro de custo.`}
             </CardDescription>
           </div>
 

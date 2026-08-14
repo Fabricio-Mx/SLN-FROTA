@@ -2,20 +2,29 @@
 
 import { useMemo, useState } from "react"
 import useSWR from "swr"
-import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, XAxis, YAxis } from "recharts"
-import { Building2, CalendarDays, CalendarRange, Droplets, Fuel, Receipt, TrendingUp, Users } from "lucide-react"
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart, XAxis, YAxis } from "recharts"
+import { AlertTriangle, Building2, CalendarDays, CalendarRange, Droplets, Fuel, Receipt, TrendingUp, Users } from "lucide-react"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { FuelCostCenterInsights } from "@/components/fuel/fuel-cost-center-insights"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useToast } from "@/hooks/use-toast"
 import { useFuelCostCenters } from "@/hooks/use-fuel-cost-centers"
+import { FUEL_DAILY_BUDGET_SWR_KEY, useFuelDailyBudgets } from "@/hooks/use-fuel-daily-budgets"
 import { fuelFetcher, FUEL_DATA_SWR_KEY, type FuelResponse } from "@/hooks/use-fuel-data"
-import { resolveCostCenterRecord } from "@/lib/cost-center-shared"
+import { getFuelFinancialPostingCycleBounds } from "@/lib/fuel-billing"
+import { normalizeCostCenterDriverName, resolveCostCenterRecord } from "@/lib/cost-center-shared"
+import { extractCostCenterCode, type FuelDailyBudgetItem } from "@/lib/fuel-daily-budget-shared"
+import { isEngineeringCostCenter, isTelecomCostCenter } from "@/lib/fuel-telecom-centers"
 import { parseFuelDateTime } from "@/lib/fuel-datetime"
 
 type FuelTypeDatum = {
@@ -29,16 +38,21 @@ type WeeklyDatum = {
   label: string
   total: number
   average: number
+  startKey?: string
+  endKey?: string
 }
 
 type PeriodDatum = {
   label: string
   total: number
+  dateKey?: string
 }
 
 type TopSpenderDatum = {
+  key: string
   name: string
   cpf: string
+  plate: string
   total: number
   transactions: number
   centroCusto: string
@@ -47,6 +61,10 @@ type TopSpenderDatum = {
 }
 
 type FuelAnalyticsPreset = "current-month" | "last-7-days" | "last-30-days" | "last-90-days" | "custom"
+
+type WeeklyScopeFilter = "all" | "telecom" | "engineering"
+
+type DailyRightPanelView = "centers" | "budget"
 
 type FuelRecordWithDate = {
   cardPlate: string
@@ -58,12 +76,28 @@ type FuelRecordWithDate = {
   parsedDate: Date
 }
 
+type TelecomDailyBudgetRow = {
+  centerCode: string
+  centerLabel: string
+  budget: number
+  spent: number
+}
+
 const FUEL_TYPE_COLORS: Record<string, string> = {
   Etanol: "#4E8F57",
   Gasolina: "#4F9BC9",
   Diesel: "#D89A4A",
   GNV: "#D86C61",
   Outros: "#A0AEC0",
+}
+
+function formatCompactCurrency(value: number): string {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
 }
 
 const weeklyChartConfig = {
@@ -98,6 +132,17 @@ function formatCurrency(value: number): string {
   }).format(value)
 }
 
+function parseBudgetInputValue(value: string): number {
+  const normalized = value.replace(/\./g, "").replace(",", ".")
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : Number.NaN
+}
+
+function getBudgetVarianceLabel(value: number): string {
+  const sign = value > 0 ? "+" : "-"
+  return `${sign} ${formatCurrency(Math.abs(value))}`
+}
+
 function formatCompactDate(date: Date): string {
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
@@ -109,6 +154,21 @@ function formatShortDate(date: Date): string {
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
     month: "2-digit",
+  }).format(date)
+}
+
+function formatFullDate(date: Date): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date)
+}
+
+function formatTime(date: Date): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
   }).format(date)
 }
 
@@ -141,18 +201,17 @@ function toDateInputValue(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
-function getBillingCycleBounds(anchorDate: Date) {
-  if (anchorDate.getDate() >= 26) {
-    return {
-      start: new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 26),
-      end: new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 25),
-    }
-  }
+function toDateKey(date: Date): string {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, "0")
+  const day = `${date.getDate()}`.padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
 
-  return {
-    start: new Date(anchorDate.getFullYear(), anchorDate.getMonth() - 1, 26),
-    end: new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 25),
-  }
+function fromDateKey(value: string): Date | null {
+  const [year, month, day] = value.split("-").map(Number)
+  if (!year || !month || !day) return null
+  return new Date(year, month - 1, day)
 }
 
 function toDateOnly(value: string): Date | null {
@@ -198,6 +257,7 @@ function endOfMonth(date: Date): Date {
 
 function normalizeFuelType(value: string): string {
   const normalized = value.trim().toLowerCase()
+  if (!normalized) return "Gasolina"
   if (normalized.includes("etan") || normalized.includes("alcool") || normalized.includes("alco")) return "Etanol"
   if (normalized.includes("gas")) return "Gasolina"
   if (normalized.includes("dies")) return "Diesel"
@@ -210,6 +270,75 @@ function normalizePersonName(name: string, cpf: string): string {
   if (trimmed && !trimmed.toLowerCase().includes("veiculo sem motorista")) return trimmed
   if (cpf.trim()) return `CPF ${cpf.trim()}`
   return "Não identificado"
+}
+
+function normalizeSearchValue(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+}
+
+function matchesRecordSearch(record: FuelRecordWithDate, query: string): boolean {
+  if (!query) return true
+
+  const driver = normalizeSearchValue(normalizePersonName(record.nomeMotorista, record.cpfMotorista))
+  const plate = normalizeSearchValue(record.cardPlate || "")
+
+  return driver.includes(query) || plate.includes(query)
+}
+
+function getPersonAggregationKey(name: string, cpf: string): string {
+  const normalizedName = normalizeCostCenterDriverName(name)
+
+  if (normalizedName && !normalizedName.includes("veiculo sem motorista")) {
+    return `name:${normalizedName}`
+  }
+
+  const trimmedCpf = cpf.trim()
+  if (trimmedCpf) {
+    return `cpf:${trimmedCpf}`
+  }
+
+  return "unknown"
+}
+
+function mergePersonCpf(currentCpf: string, nextCpf: string): string {
+  const currentTrimmed = currentCpf.trim()
+  const nextTrimmed = nextCpf.trim()
+
+  if (!currentTrimmed) return nextTrimmed || "-"
+  if (!nextTrimmed || nextTrimmed === currentTrimmed) return currentTrimmed
+
+  return currentTrimmed
+}
+
+function mergePersonPlate(currentPlate: string, nextPlate: string): string {
+  const currentTrimmed = currentPlate.trim()
+  const nextTrimmed = nextPlate.trim()
+
+  if (!currentTrimmed) return nextTrimmed || "-"
+  if (!nextTrimmed || nextTrimmed === currentTrimmed) return currentTrimmed
+
+  return currentTrimmed
+}
+
+function formatUnmatchedPersonLabel(spender: Pick<TopSpenderDatum, "name" | "cpf" | "plate">): string {
+  const normalizedName = spender.name.trim()
+  if (normalizedName && normalizedName !== "Não identificado") {
+    return normalizedName
+  }
+
+  if (spender.cpf.trim() && spender.cpf.trim() !== "-") {
+    return `CPF ${spender.cpf.trim()}`
+  }
+
+  if (spender.plate.trim() && spender.plate.trim() !== "-") {
+    return `Placa ${spender.plate.trim()}`
+  }
+
+  return "Registro sem identificação"
 }
 
 function formatPeriodLabel(preset: FuelAnalyticsPreset, rangeStart: Date, rangeEnd: Date): string {
@@ -265,7 +394,11 @@ function formatRankingPersonLabel(value: string): string {
   return `${composed.slice(0, 20)}...`
 }
 
-export function FuelDashboardOverview() {
+type FuelDashboardOverviewProps = {
+  isMaster?: boolean
+}
+
+export function FuelDashboardOverview({ isMaster = false }: FuelDashboardOverviewProps = {}) {
   const {
     records,
     monthlyReferenceDate,
@@ -274,10 +407,16 @@ export function FuelDashboardOverview() {
     availableMonths,
     weeklyComparison,
     currentMonth,
+    lastImportedAt,
     selectedMonth,
     setSelectedMonth,
   } = useFuelDataContext()
+  const { toast } = useToast()
   const { lookup: costCenterLookup } = useFuelCostCenters()
+  const { items: dailyBudgetItems, isLoading: isDailyBudgetLoading, mutate: mutateDailyBudgets } = useFuelDailyBudgets()
+  const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({})
+  const [isBudgetEditMode, setIsBudgetEditMode] = useState(false)
+  const [savingBudgetCenterCode, setSavingBudgetCenterCode] = useState<string | null>(null)
   const [analyticsPreset, setAnalyticsPreset] = useState<FuelAnalyticsPreset>("current-month")
   const defaultCustomStart = useMemo(() => toDateInputValue(startOfMonth(monthlyReferenceDate)), [monthlyReferenceDate])
   const defaultCustomEnd = useMemo(() => toDateInputValue(reportDate), [reportDate])
@@ -290,11 +429,25 @@ export function FuelDashboardOverview() {
     start: defaultCustomStart,
     end: defaultCustomEnd,
   }))
-  const billingCycle = useMemo(() => getBillingCycleBounds(reportDate), [reportDate])
+  const [selectedDailyKey, setSelectedDailyKey] = useState<string | null>(null)
+  const [isDailyDetailOpen, setIsDailyDetailOpen] = useState(false)
+  const [dailyScopeFilter, setDailyScopeFilter] = useState<WeeklyScopeFilter>("all")
+  const [dailyRightPanelView, setDailyRightPanelView] = useState<DailyRightPanelView>("centers")
+  const [selectedDailyCenterKey, setSelectedDailyCenterKey] = useState<string | null>(null)
+  const [dailyRecordsSearch, setDailyRecordsSearch] = useState("")
+  const [selectedWeeklyStartKey, setSelectedWeeklyStartKey] = useState<string | null>(null)
+  const [isWeeklyDetailOpen, setIsWeeklyDetailOpen] = useState(false)
+  const [weeklyScopeFilter, setWeeklyScopeFilter] = useState<WeeklyScopeFilter>("all")
+  const [weeklyRightPanelView, setWeeklyRightPanelView] = useState<DailyRightPanelView>("centers")
+  const [selectedWeeklyCenterKey, setSelectedWeeklyCenterKey] = useState<string | null>(null)
+  const [weeklyRecordsSearch, setWeeklyRecordsSearch] = useState("")
+  const billingCycle = useMemo(() => getFuelFinancialPostingCycleBounds(reportDate), [reportDate])
   const billingCycleKey = useMemo(() => {
     const params = new URLSearchParams({
       start: toDateInputValue(billingCycle.start),
       end: toDateInputValue(billingCycle.end),
+      dateField: "posting",
+      endExclusive: "true",
     })
 
     return `${FUEL_DATA_SWR_KEY}?${params.toString()}`
@@ -380,6 +533,15 @@ export function FuelDashboardOverview() {
     return parsedRecords.length > 0 ? parsedRecords[parsedRecords.length - 1].parsedDate : reportDate
   }, [parsedRecords, reportDate])
 
+  const lastImportedLabel = useMemo(() => {
+    if (!lastImportedAt) return null
+
+    const parsed = new Date(lastImportedAt)
+    if (Number.isNaN(parsed.getTime())) return null
+
+    return formatFullDate(parsed)
+  }, [lastImportedAt])
+
   const analyticsRange = useMemo(() => {
     if (analyticsPreset === "custom") {
       const start = toDateOnly(effectiveCustomRange.start) ?? startOfMonth(latestRecordDate)
@@ -426,7 +588,7 @@ export function FuelDashboardOverview() {
       const fuelType = normalizeFuelType(record.tipoCombustivel)
       fuelMap.set(fuelType, (fuelMap.get(fuelType) ?? 0) + record.valor)
 
-      const personKey = `${record.nomeMotorista}|${record.cpfMotorista}`
+      const personKey = getPersonAggregationKey(record.nomeMotorista, record.cpfMotorista)
       const current = spendersMap.get(personKey)
       const normalizedDriver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
       const resolvedCostCenter = resolvedCostCenterByDriver.has(normalizedDriver)
@@ -440,10 +602,14 @@ export function FuelDashboardOverview() {
       if (current) {
         current.total += record.valor
         current.transactions += 1
+        current.cpf = mergePersonCpf(current.cpf, record.cpfMotorista)
+        current.plate = mergePersonPlate(current.plate, record.cardPlate)
       } else {
         spendersMap.set(personKey, {
+          key: personKey,
           name: normalizedDriver,
-          cpf: record.cpfMotorista || "-",
+          cpf: record.cpfMotorista.trim() || "-",
+          plate: record.cardPlate.trim() || "-",
           total: record.valor,
           transactions: 1,
           centroCusto: resolvedCostCenter?.centroCusto ?? "",
@@ -476,15 +642,15 @@ export function FuelDashboardOverview() {
     const topSpendersMappedCount = topSpenders.filter((spender) => spender.centroCusto).length
     const costCenterRanking = Array.from(
       topSpenders.reduce((map, spender) => {
-        if (!spender.centroCusto) return map
+        const costCenterLabel = spender.centroCusto || "Sem centro de custo"
 
-        const current = map.get(spender.centroCusto)
+        const current = map.get(costCenterLabel)
         if (current) {
           current.total += spender.total
           current.people += 1
         } else {
-          map.set(spender.centroCusto, {
-            centroCusto: spender.centroCusto,
+          map.set(costCenterLabel, {
+            centroCusto: costCenterLabel,
             total: spender.total,
             people: 1,
           })
@@ -520,6 +686,7 @@ export function FuelDashboardOverview() {
       const dayEnd = endOfDay(day)
 
       return {
+        dateKey: toDateKey(day),
         label: formatCompactDate(day),
         total: filteredRecords.reduce((sum, record) => {
           return record.parsedDate >= day && record.parsedDate <= dayEnd ? sum + record.valor : sum
@@ -533,6 +700,8 @@ export function FuelDashboardOverview() {
       const weekEnd = endOfWeek(weekStart)
 
       return {
+        startKey: toDateKey(weekStart),
+        endKey: toDateKey(weekEnd),
         label: formatCompactDate(weekStart),
         total: filteredRecords.reduce((sum, record) => {
           return record.parsedDate >= weekStart && record.parsedDate <= weekEnd ? sum + record.valor : sum
@@ -647,6 +816,10 @@ export function FuelDashboardOverview() {
     }))
   }, [insights.topSpenders])
 
+  const unmatchedDriversPreview = useMemo(() => {
+    return insights.topSpenders.filter((driver) => !driver.centroCusto).slice(0, 6)
+  }, [insights.topSpenders])
+
   const weeklyComparisonChartConfig = useMemo(() => {
     return weeklyComparison.months.reduce<Record<string, { label: string; color: string }>>((config, month) => {
       config[month.key] = {
@@ -656,6 +829,468 @@ export function FuelDashboardOverview() {
       return config
     }, {})
   }, [weeklyComparison.months])
+
+  const selectedDailyPoint = useMemo(() => {
+    if (insights.dailySeries.length === 0) return null
+
+    const fromState = selectedDailyKey
+      ? insights.dailySeries.find((entry) => entry.dateKey === selectedDailyKey) ?? null
+      : null
+
+    return fromState ?? insights.dailySeries[insights.dailySeries.length - 1]
+  }, [insights.dailySeries, selectedDailyKey])
+
+  const selectedDailyDate = useMemo(() => {
+    if (!selectedDailyPoint?.dateKey) return null
+    return fromDateKey(selectedDailyPoint.dateKey)
+  }, [selectedDailyPoint])
+
+  const selectedDayRecords = useMemo(() => {
+    if (!selectedDailyPoint?.dateKey) return []
+
+    return filteredRecords
+      .filter((record) => toDateKey(record.parsedDate) === selectedDailyPoint.dateKey)
+      .sort((left, right) => right.parsedDate.getTime() - left.parsedDate.getTime())
+  }, [filteredRecords, selectedDailyPoint])
+
+  const selectedDayScopedRecords = useMemo(() => {
+    if (dailyScopeFilter === "all") return selectedDayRecords
+
+    return selectedDayRecords.filter((record) => {
+      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+      const resolved = resolveCostCenterRecord(driver, costCenterLookup)
+      const centerLabel = resolved?.centroCusto || "Sem centro de custo"
+      return dailyScopeFilter === "telecom" ? isTelecomCostCenter(centerLabel) : isEngineeringCostCenter(centerLabel)
+    })
+  }, [costCenterLookup, dailyScopeFilter, selectedDayRecords])
+
+  const selectedDayScopedResolvedRecords = useMemo(() => {
+    return selectedDayScopedRecords.map((record) => {
+      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+      const resolved = resolveCostCenterRecord(driver, costCenterLookup)
+
+      return {
+        record,
+        centerLabel: resolved?.centroCusto || "Sem centro de custo",
+      }
+    })
+  }, [costCenterLookup, selectedDayScopedRecords])
+
+  const selectedDayCostCenters = useMemo(() => {
+    const aggregation = new Map<
+      string,
+      {
+        centroCusto: string
+        total: number
+        transactions: number
+        drivers: Set<string>
+      }
+    >()
+
+    for (const item of selectedDayScopedResolvedRecords) {
+      const record = item.record
+      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+      const centerLabel = item.centerLabel
+      const key = centerLabel.toLowerCase()
+      const current = aggregation.get(key)
+
+      if (current) {
+        current.total += record.valor
+        current.transactions += 1
+        current.drivers.add(driver)
+      } else {
+        aggregation.set(key, {
+          centroCusto: centerLabel,
+          total: record.valor,
+          transactions: 1,
+          drivers: new Set([driver]),
+        })
+      }
+    }
+
+    return Array.from(aggregation.values())
+      .map((item) => ({
+        key: item.centroCusto.toLowerCase(),
+        centroCusto: item.centroCusto,
+        total: item.total,
+        transactions: item.transactions,
+        drivers: item.drivers.size,
+      }))
+      .sort((left, right) => right.total - left.total)
+  }, [selectedDayScopedResolvedRecords])
+
+  const selectedDayCostCentersTotal = useMemo(() => {
+    return selectedDayCostCenters.reduce((total, center) => total + center.total, 0)
+  }, [selectedDayCostCenters])
+
+  const selectedDayTelecomSpentByCode = useMemo(() => {
+    const totals = new Map<string, { total: number; centerLabel: string }>()
+
+    for (const record of selectedDayRecords) {
+      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+      const resolved = resolveCostCenterRecord(driver, costCenterLookup)
+      const centerLabel = resolved?.centroCusto || ""
+
+      if (!isTelecomCostCenter(centerLabel)) continue
+
+      const centerCode = extractCostCenterCode(centerLabel)
+      if (!centerCode) continue
+
+      const current = totals.get(centerCode)
+      totals.set(centerCode, {
+        total: (current?.total ?? 0) + record.valor,
+        centerLabel: current?.centerLabel || centerLabel,
+      })
+    }
+
+    return totals
+  }, [costCenterLookup, selectedDayRecords])
+
+  const telecomDailyBudgetRows = useMemo<TelecomDailyBudgetRow[]>(() => {
+    const budgetsByCode = new Map<string, FuelDailyBudgetItem>()
+
+    for (const item of dailyBudgetItems) {
+      budgetsByCode.set(item.centerCode, item)
+    }
+
+    const rows: TelecomDailyBudgetRow[] = []
+
+    for (const [centerCode, budget] of budgetsByCode.entries()) {
+      const spent = selectedDayTelecomSpentByCode.get(centerCode)?.total ?? 0
+      const centerLabel = selectedDayTelecomSpentByCode.get(centerCode)?.centerLabel || budget.centerLabel || centerCode
+      rows.push({
+        centerCode,
+        centerLabel,
+        budget: budget.dailyBudget,
+        spent,
+      })
+    }
+
+    for (const [centerCode, spentData] of selectedDayTelecomSpentByCode.entries()) {
+      if (budgetsByCode.has(centerCode)) continue
+
+      rows.push({
+        centerCode,
+        centerLabel: spentData.centerLabel || centerCode,
+        budget: 0,
+        spent: spentData.total,
+      })
+    }
+
+    return rows.sort((left, right) => Number(left.centerCode) - Number(right.centerCode))
+  }, [dailyBudgetItems, selectedDayTelecomSpentByCode])
+
+  const telecomBudgetTotals = useMemo(() => {
+    return telecomDailyBudgetRows.reduce(
+      (acc, row) => {
+        acc.budget += row.budget
+        acc.spent += row.spent
+        return acc
+      },
+      { budget: 0, spent: 0 },
+    )
+  }, [telecomDailyBudgetRows])
+
+  async function saveDailyBudget(centerCode: string, centerLabel: string, budgetValue: number) {
+    if (!Number.isFinite(budgetValue) || budgetValue < 0) {
+      toast({
+        title: "Orçamento inválido",
+        description: "Informe um valor diário maior ou igual a zero.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setSavingBudgetCenterCode(centerCode)
+
+    try {
+      const res = await fetch(FUEL_DAILY_BUDGET_SWR_KEY, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          centerCode,
+          centerLabel,
+          dailyBudget: Number(budgetValue.toFixed(2)),
+        }),
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Falha ao salvar orçamento diário.")
+      }
+
+      await mutateDailyBudgets()
+      toast({
+        title: "Orçamento diário salvo",
+        description: `${centerCode} atualizado para ${formatCompactCurrency(budgetValue)}.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Erro ao salvar orçamento",
+        description: error instanceof Error ? error.message : "Não foi possível salvar no momento.",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingBudgetCenterCode(null)
+    }
+  }
+
+  async function handleSaveBudgetRow(row: TelecomDailyBudgetRow) {
+    const rawDraft = budgetDrafts[row.centerCode]
+    const hasDraft = typeof rawDraft === "string"
+    const nextBudget = hasDraft ? parseBudgetInputValue(rawDraft) : row.budget
+    await saveDailyBudget(row.centerCode, row.centerLabel, nextBudget)
+
+    setBudgetDrafts((current) => {
+      const next = { ...current }
+      delete next[row.centerCode]
+      return next
+    })
+  }
+
+  const activeDailyCenterKey = useMemo(() => {
+    if (!selectedDailyCenterKey) return null
+    return selectedDayCostCenters.some((center) => center.key === selectedDailyCenterKey) ? selectedDailyCenterKey : null
+  }, [selectedDailyCenterKey, selectedDayCostCenters])
+
+  const activeDailyCenter = useMemo(() => {
+    if (!activeDailyCenterKey) return null
+    return selectedDayCostCenters.find((center) => center.key === activeDailyCenterKey) ?? null
+  }, [activeDailyCenterKey, selectedDayCostCenters])
+
+  function getDailyCenterKeyByCode(centerCode: string): string | null {
+    const match = selectedDayCostCenters.find((center) => extractCostCenterCode(center.centroCusto) === centerCode)
+    return match?.key ?? null
+  }
+
+  const selectedDayRecordsForList = useMemo(() => {
+    if (!activeDailyCenterKey) return selectedDayScopedResolvedRecords.map((item) => item.record)
+
+    return selectedDayScopedResolvedRecords
+      .filter((item) => item.centerLabel.toLowerCase() === activeDailyCenterKey)
+      .map((item) => item.record)
+  }, [activeDailyCenterKey, selectedDayScopedResolvedRecords])
+
+  const selectedDaySearchQuery = useMemo(() => normalizeSearchValue(dailyRecordsSearch), [dailyRecordsSearch])
+
+  const selectedDayRecordsForDisplay = useMemo(() => {
+    return selectedDayRecordsForList.filter((record) => matchesRecordSearch(record, selectedDaySearchQuery))
+  }, [selectedDayRecordsForList, selectedDaySearchQuery])
+
+  const selectedWeeklyPoint = useMemo(() => {
+    if (insights.weeklySeries.length === 0) return null
+
+    const fromState = selectedWeeklyStartKey
+      ? insights.weeklySeries.find((entry) => entry.startKey === selectedWeeklyStartKey) ?? null
+      : null
+
+    return fromState ?? insights.weeklySeries[insights.weeklySeries.length - 1]
+  }, [insights.weeklySeries, selectedWeeklyStartKey])
+
+  const selectedWeekRange = useMemo(() => {
+    if (!selectedWeeklyPoint?.startKey || !selectedWeeklyPoint.endKey) return null
+
+    const start = fromDateKey(selectedWeeklyPoint.startKey)
+    const end = fromDateKey(selectedWeeklyPoint.endKey)
+    if (!start || !end) return null
+
+    return {
+      start: startOfDay(start),
+      end: endOfDay(end),
+    }
+  }, [selectedWeeklyPoint])
+
+  const selectedWeekRecords = useMemo(() => {
+    if (!selectedWeekRange) return []
+
+    return filteredRecords
+      .filter((record) => record.parsedDate >= selectedWeekRange.start && record.parsedDate <= selectedWeekRange.end)
+      .sort((left, right) => right.parsedDate.getTime() - left.parsedDate.getTime())
+  }, [filteredRecords, selectedWeekRange])
+
+  const selectedWeekScopedRecords = useMemo(() => {
+    if (weeklyScopeFilter === "all") return selectedWeekRecords
+
+    return selectedWeekRecords.filter((record) => {
+      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+      const resolved = resolveCostCenterRecord(driver, costCenterLookup)
+      const centerLabel = resolved?.centroCusto || "Sem centro de custo"
+      return weeklyScopeFilter === "telecom" ? isTelecomCostCenter(centerLabel) : isEngineeringCostCenter(centerLabel)
+    })
+  }, [costCenterLookup, selectedWeekRecords, weeklyScopeFilter])
+
+  const selectedWeekScopedResolvedRecords = useMemo(() => {
+    return selectedWeekScopedRecords.map((record) => {
+      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+      const resolved = resolveCostCenterRecord(driver, costCenterLookup)
+      const centerLabel = resolved?.centroCusto || "Sem centro de custo"
+
+      return {
+        record,
+        centerLabel,
+      }
+    })
+  }, [costCenterLookup, selectedWeekScopedRecords])
+
+  const selectedWeekCostCenters = useMemo(() => {
+    const aggregation = new Map<
+      string,
+      {
+        centroCusto: string
+        total: number
+        transactions: number
+        drivers: Set<string>
+      }
+    >()
+
+    for (const item of selectedWeekScopedResolvedRecords) {
+      const driver = normalizePersonName(item.record.nomeMotorista, item.record.cpfMotorista)
+      const centerLabel = item.centerLabel
+      const key = centerLabel.toLowerCase()
+      const current = aggregation.get(key)
+
+      if (current) {
+        current.total += item.record.valor
+        current.transactions += 1
+        current.drivers.add(driver)
+      } else {
+        aggregation.set(key, {
+          centroCusto: centerLabel,
+          total: item.record.valor,
+          transactions: 1,
+          drivers: new Set([driver]),
+        })
+      }
+    }
+
+    return Array.from(aggregation.values())
+      .map((item) => ({
+        key: item.centroCusto.toLowerCase(),
+        centroCusto: item.centroCusto,
+        total: item.total,
+        transactions: item.transactions,
+        drivers: item.drivers.size,
+        telecom: isTelecomCostCenter(item.centroCusto),
+        engineering: isEngineeringCostCenter(item.centroCusto),
+      }))
+      .sort((left, right) => right.total - left.total)
+  }, [selectedWeekScopedResolvedRecords])
+
+  const selectedWeekCostCentersTotal = useMemo(() => {
+    return selectedWeekCostCenters.reduce((total, center) => total + center.total, 0)
+  }, [selectedWeekCostCenters])
+
+  const daysInSelectedWeek = useMemo(() => {
+    if (!selectedWeekRange) return 7
+
+    const diffDays =
+      Math.round((startOfDay(selectedWeekRange.end).getTime() - startOfDay(selectedWeekRange.start).getTime()) / (24 * 60 * 60 * 1000)) + 1
+
+    return diffDays > 0 ? diffDays : 7
+  }, [selectedWeekRange])
+
+  const selectedWeekTelecomSpentByCode = useMemo(() => {
+    const totals = new Map<string, { total: number; centerLabel: string }>()
+
+    for (const record of selectedWeekRecords) {
+      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+      const resolved = resolveCostCenterRecord(driver, costCenterLookup)
+      const centerLabel = resolved?.centroCusto || ""
+
+      if (!isTelecomCostCenter(centerLabel)) continue
+
+      const centerCode = extractCostCenterCode(centerLabel)
+      if (!centerCode) continue
+
+      const current = totals.get(centerCode)
+      totals.set(centerCode, {
+        total: (current?.total ?? 0) + record.valor,
+        centerLabel: current?.centerLabel || centerLabel,
+      })
+    }
+
+    return totals
+  }, [costCenterLookup, selectedWeekRecords])
+
+  const telecomWeeklyBudgetRows = useMemo<TelecomDailyBudgetRow[]>(() => {
+    const budgetsByCode = new Map<string, FuelDailyBudgetItem>()
+
+    for (const item of dailyBudgetItems) {
+      budgetsByCode.set(item.centerCode, item)
+    }
+
+    const rows: TelecomDailyBudgetRow[] = []
+
+    for (const [centerCode, budget] of budgetsByCode.entries()) {
+      const spent = selectedWeekTelecomSpentByCode.get(centerCode)?.total ?? 0
+      const centerLabel = selectedWeekTelecomSpentByCode.get(centerCode)?.centerLabel || budget.centerLabel || centerCode
+      rows.push({
+        centerCode,
+        centerLabel,
+        budget: Number((budget.dailyBudget * daysInSelectedWeek).toFixed(2)),
+        spent,
+      })
+    }
+
+    for (const [centerCode, spentData] of selectedWeekTelecomSpentByCode.entries()) {
+      if (budgetsByCode.has(centerCode)) continue
+
+      rows.push({
+        centerCode,
+        centerLabel: spentData.centerLabel || centerCode,
+        budget: 0,
+        spent: spentData.total,
+      })
+    }
+
+    return rows.sort((left, right) => Number(left.centerCode) - Number(right.centerCode))
+  }, [dailyBudgetItems, daysInSelectedWeek, selectedWeekTelecomSpentByCode])
+
+  const telecomWeeklyBudgetTotals = useMemo(() => {
+    return telecomWeeklyBudgetRows.reduce(
+      (acc, row) => {
+        acc.budget += row.budget
+        acc.spent += row.spent
+        return acc
+      },
+      { budget: 0, spent: 0 },
+    )
+  }, [telecomWeeklyBudgetRows])
+
+  function getWeeklyCenterKeyByCode(centerCode: string): string | null {
+    const match = selectedWeekCostCenters.find((center) => extractCostCenterCode(center.centroCusto) === centerCode)
+    return match?.key ?? null
+  }
+
+  const activeWeeklyCenterKey = useMemo(() => {
+    if (!selectedWeeklyCenterKey) return null
+    const exists = selectedWeekCostCenters.some((center) => center.key === selectedWeeklyCenterKey)
+    return exists ? selectedWeeklyCenterKey : null
+  }, [selectedWeekCostCenters, selectedWeeklyCenterKey])
+
+  const activeWeeklyCenter = useMemo(() => {
+    if (!activeWeeklyCenterKey) return null
+    return selectedWeekCostCenters.find((center) => center.key === activeWeeklyCenterKey) ?? null
+  }, [activeWeeklyCenterKey, selectedWeekCostCenters])
+
+  const selectedWeekRecordsForList = useMemo(() => {
+    if (!activeWeeklyCenterKey) {
+      return selectedWeekScopedResolvedRecords.map((item) => item.record)
+    }
+
+    return selectedWeekScopedResolvedRecords
+      .filter((item) => item.centerLabel.toLowerCase() === activeWeeklyCenterKey)
+      .map((item) => item.record)
+  }, [activeWeeklyCenterKey, selectedWeekScopedResolvedRecords])
+
+  const selectedWeekSearchQuery = useMemo(() => normalizeSearchValue(weeklyRecordsSearch), [weeklyRecordsSearch])
+
+  const selectedWeekRecordsForDisplay = useMemo(() => {
+    return selectedWeekRecordsForList.filter((record) => matchesRecordSearch(record, selectedWeekSearchQuery))
+  }, [selectedWeekRecordsForList, selectedWeekSearchQuery])
 
   return (
     <div className="space-y-4">
@@ -766,10 +1401,33 @@ export function FuelDashboardOverview() {
                 <CartesianGrid vertical={false} strokeDasharray="3 3" />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
                 <YAxis hide />
-                <Bar dataKey="total" fill="var(--color-total)" radius={[8, 8, 0, 0]} />
+                <Bar
+                  dataKey="total"
+                  radius={[8, 8, 0, 0]}
+                  cursor="pointer"
+                  onClick={(_, index) => {
+                    setSelectedDailyKey(insights.dailySeries[index]?.dateKey ?? null)
+                    setIsDailyDetailOpen(true)
+                  }}
+                >
+                  {insights.dailySeries.map((entry) => {
+                    const isActive = !!selectedDailyPoint?.dateKey && selectedDailyPoint.dateKey === entry.dateKey
+                    return <Cell key={entry.dateKey ?? entry.label} fill={isActive ? "#4f8f57" : "var(--color-total)"} />
+                  })}
+                </Bar>
                 <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatCurrency(Number(value))} />} />
               </BarChart>
             </ChartContainer>
+
+            <div className="mt-5 border-t border-[#e4ebde] pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-800">
+                  {selectedDailyDate ? `Dia selecionado: ${formatFullDate(selectedDailyDate)}` : "Selecione um dia"}
+                </p>
+                <p className="text-sm font-bold text-[#376b40]">{formatCurrency(selectedDailyPoint?.total ?? 0)}</p>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">Clique em uma barra para abrir o detalhamento em tela cheia.</p>
+            </div>
           </CardContent>
         </Card>
 
@@ -792,7 +1450,20 @@ export function FuelDashboardOverview() {
                 <CartesianGrid vertical={false} strokeDasharray="3 3" />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
                 <YAxis hide />
-                <Bar dataKey="total" fill="var(--color-total)" radius={[8, 8, 0, 0]} />
+                <Bar
+                  dataKey="total"
+                  radius={[8, 8, 0, 0]}
+                  cursor="pointer"
+                  onClick={(_, index) => {
+                    setSelectedWeeklyStartKey(insights.weeklySeries[index]?.startKey ?? null)
+                    setIsWeeklyDetailOpen(true)
+                  }}
+                >
+                  {insights.weeklySeries.map((entry) => {
+                    const isActive = !!selectedWeeklyPoint?.startKey && selectedWeeklyPoint.startKey === entry.startKey
+                    return <Cell key={entry.startKey ?? entry.label} fill={isActive ? "#4f8f57" : "var(--color-total)"} />
+                  })}
+                </Bar>
                 <Line type="monotone" dataKey="average" stroke="var(--color-average)" strokeWidth={3} dot={false} />
                 <ChartTooltip
                   content={
@@ -809,6 +1480,16 @@ export function FuelDashboardOverview() {
                 <ChartLegend content={<ChartLegendContent />} />
               </ComposedChart>
             </ChartContainer>
+
+            <div className="mt-5 border-t border-[#e4ebde] pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-800">
+                  {selectedWeekRange ? `Semana selecionada: ${formatCompactDate(selectedWeekRange.start)} a ${formatCompactDate(selectedWeekRange.end)}` : "Selecione uma semana"}
+                </p>
+                <p className="text-sm font-bold text-[#376b40]">{formatCurrency(selectedWeeklyPoint?.total ?? 0)}</p>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">Clique em uma barra para abrir os detalhes da semana e a aba de metas semanais.</p>
+            </div>
           </CardContent>
         </Card>
 
@@ -973,6 +1654,9 @@ export function FuelDashboardOverview() {
               <p className="text-[1.7rem] font-extrabold leading-none tracking-[-0.03em] text-slate-900">{formatCurrency(billingCycleFuelTotal)}</p>
               <p className="mt-1.5 text-[0.9rem] font-semibold leading-tight text-slate-700">Faturamento Mensal</p>
               <p className="mt-1 text-[0.76rem] leading-tight text-slate-500">Ciclo {formatShortDate(billingCycle.start)} a {formatShortDate(billingCycle.end)}</p>
+              <p className="mt-1 text-[0.76rem] leading-tight text-slate-500">
+                {lastImportedLabel ? `Última atualização: ${lastImportedLabel}` : "Última atualização: sem importação registrada"}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -1054,7 +1738,7 @@ export function FuelDashboardOverview() {
               <div className="space-y-4">
                 <div className="rounded-2xl border border-[#dce6d6] bg-white/80 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
                   <ChartContainer className="h-[300px] w-full" config={rankingChartConfig}>
-                  <BarChart data={rankingChartData} layout="vertical" margin={{ left: 18, right: 10, top: 6, bottom: 6 }}>
+                  <BarChart data={rankingChartData} layout="vertical" margin={{ left: 18, right: 110, top: 6, bottom: 6 }}>
                     <CartesianGrid horizontal={false} strokeDasharray="3 3" />
                     <XAxis type="number" hide />
                     <YAxis
@@ -1066,8 +1750,15 @@ export function FuelDashboardOverview() {
                       tickFormatter={formatRankingPersonLabel}
                     />
                     <Bar dataKey="total" radius={[0, 8, 8, 0]}>
+                      <LabelList
+                        dataKey="total"
+                        position="right"
+                        offset={12}
+                        formatter={(value) => formatCompactCurrency(Number(value ?? 0))}
+                        className="fill-slate-700 text-[12px] font-semibold"
+                      />
                       {rankingChartData.map((entry) => (
-                        <Cell key={`${entry.cpf}-${entry.name}`} fill={entry.barColor} />
+                        <Cell key={entry.key} fill={entry.barColor} />
                       ))}
                     </Bar>
                     <ChartTooltip
@@ -1105,6 +1796,39 @@ export function FuelDashboardOverview() {
                   </BarChart>
                   </ChartContainer>
                 </div>
+                {unmatchedDriversPreview.length > 0 ? (
+                  <div className="rounded-2xl border border-[#f2d6cc] bg-[#fffdfc] p-4">
+                    <div className="flex items-center justify-between gap-3 border-b border-[#f2d6cc] pb-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">Quem compõe o “Sem centro de custo” deste gráfico</p>
+                        <p className="mt-1 text-xs text-slate-500">Lista calculada no mesmo recorte e com a mesma base do ranking acima.</p>
+                      </div>
+                      <Badge variant="outline" className="border-[#f1c8ba] bg-[#fff1eb] text-[#b85e54]">
+                        {unmatchedDriversPreview.length} item(ns)
+                      </Badge>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {unmatchedDriversPreview.map((driver) => (
+                        <div key={driver.key} className="grid gap-2 rounded-xl border border-[#f3d8d0] bg-white/90 p-3 md:grid-cols-[minmax(0,1.4fr)_0.9fr_0.9fr_110px_130px] md:items-center">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{formatUnmatchedPersonLabel(driver)}</p>
+                            <p className="mt-1 text-xs text-slate-500">{driver.name.trim() === "Não identificado" ? "Nome não veio preenchido no relatório." : "Motorista sem vínculo de centro de custo."}</p>
+                          </div>
+                          <div className="text-xs text-slate-600">
+                            <span className="font-semibold text-slate-700">CPF:</span> {driver.cpf || "-"}
+                          </div>
+                          <div className="text-xs text-slate-600">
+                            <span className="font-semibold text-slate-700">Placa:</span> {driver.plate || "-"}
+                          </div>
+                          <div className="text-xs text-slate-600">
+                            <span className="font-semibold text-slate-700">Qtd:</span> {driver.transactions}
+                          </div>
+                          <div className="text-sm font-bold text-[#b85e54]">{formatCurrency(driver.total)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="grid gap-3 rounded-2xl border border-[#dce6d6] bg-[#fbfcfa] p-4 md:grid-cols-3">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Principal nome do período</p>
@@ -1207,7 +1931,663 @@ export function FuelDashboardOverview() {
         </div>
       </div>
 
-      <FuelCostCenterInsights />
+      {unmatchedDriversPreview.length > 0 ? (
+        <Card className="border-[#f2d6cc] bg-[linear-gradient(180deg,#fffdfc_0%,#fff6f2_100%)] shadow-sm">
+          <CardHeader className="border-b border-[#f2d6cc] pb-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="rounded-2xl bg-[#fde6df] p-3 text-[#d86c61]">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg text-slate-900">Motoristas sem centro de custo</CardTitle>
+                  <p className="mt-1 text-sm text-slate-500">Esses nomes estão no período atual, mas ainda não possuem vínculo com centro de custo.</p>
+                </div>
+              </div>
+              <Badge variant="outline" className="border-[#f1c8ba] bg-[#fff1eb] text-[#b85e54]">
+                {unmatchedDriversPreview.length} em destaque
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
+            {unmatchedDriversPreview.map((driver) => (
+              <div key={driver.key} className="rounded-2xl border border-[#f3d8d0] bg-white/90 p-4">
+                <p className="line-clamp-2 text-sm font-bold text-slate-900">{driver.name}</p>
+                <p className="mt-2 text-lg font-black tracking-tight text-[#b85e54]">{formatCurrency(driver.total)}</p>
+                <p className="mt-1 text-xs uppercase tracking-[0.12em] text-slate-500">{driver.transactions} abastecimentos</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <FuelCostCenterInsights
+        records={filteredRecords}
+        description={`Resumo do período ${insights.periodLabel} com os motoristas cruzados pela planilha de centro de custo.`}
+      />
+
+      <Dialog open={isDailyDetailOpen} onOpenChange={setIsDailyDetailOpen}>
+        <DialogContent
+          className="grid h-[95vh] w-[98vw] max-w-[98vw] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden border-[#d8dfd1] bg-[linear-gradient(180deg,#f9fcf7_0%,#eef4ea_100%)] p-0 text-slate-900 sm:max-w-[98vw]"
+          showCloseButton
+        >
+          <DialogHeader className="border-b border-[#dfe8d9] px-6 py-5 text-left">
+            <DialogTitle className="text-2xl text-slate-900">
+              {selectedDailyDate ? `Consumo detalhado - ${formatFullDate(selectedDailyDate)}` : "Consumo detalhado do dia"}
+            </DialogTitle>
+            <DialogDescription className="text-slate-600">
+              {selectedDayScopedRecords.length} lançamentos filtrados - {selectedDayCostCenters.length} centros de custo - Total {formatCurrency(selectedDayCostCentersTotal)}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-h-0 overflow-hidden px-5 py-4 lg:px-6">
+            <div className="flex h-full min-h-0 flex-col gap-3">
+            <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-[#d8e4d2] bg-white/90 px-4 py-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="daily-scope-filter" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Escopo</Label>
+                <Select
+                  value={dailyScopeFilter}
+                  onValueChange={(value) => {
+                    setDailyScopeFilter(value as WeeklyScopeFilter)
+                    setSelectedDailyCenterKey(null)
+                  }}
+                >
+                  <SelectTrigger id="daily-scope-filter" className="h-9 w-[180px] bg-white">
+                    <SelectValue placeholder="Selecione o escopo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="telecom">Telecom</SelectItem>
+                    <SelectItem value="engineering">Engenharia</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="pb-1 text-xs text-slate-500">Escolha Telecom, Engenharia ou todos os centros de custo.</p>
+            </div>
+
+            <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1.12fr)_minmax(360px,0.98fr)] xl:grid-cols-[minmax(0,1.05fr)_minmax(380px,1fr)]">
+              <div className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] rounded-xl border border-[#d8e4d2] bg-[linear-gradient(180deg,#ffffff_0%,#fbfcfa_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.88)]">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e8efe2] px-4 py-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Lançamentos do dia</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {activeDailyCenterKey
+                        ? `Centro selecionado: ${selectedDayCostCenters.find((center) => center.key === activeDailyCenterKey)?.centroCusto ?? ""}`
+                        : "Todos os centros do escopo selecionado"}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-[#dce8d6] bg-[#f6fbf3] px-2.5 py-1 text-[11px] font-semibold text-[#4f7d48]">
+                    {selectedDayRecordsForDisplay.length} lançamentos
+                  </span>
+                </div>
+                <div className="px-4 pt-3">
+                  <Input
+                    value={dailyRecordsSearch}
+                    onChange={(event) => setDailyRecordsSearch(event.target.value)}
+                    placeholder="Buscar por colaborador ou placa"
+                    className="h-9 bg-white"
+                  />
+                </div>
+                <ScrollArea className="min-h-0 h-full px-4 py-3">
+                {selectedDayRecordsForDisplay.length === 0 ? (
+                  <p className="mt-4 text-sm text-slate-500">Não há lançamentos para o dia selecionado.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {selectedDayRecordsForDisplay.map((record) => {
+                      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+
+                      return (
+                        <div key={`${record.dateTime}-${record.cardPlate}-${record.cpfMotorista}-${record.valor}`} className="rounded-lg border border-[#e8efe2] bg-white px-3 py-2 shadow-sm shadow-[#eef4ea]/40">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-800">{driver}</p>
+                            <p className="shrink-0 text-sm font-bold text-slate-900">{formatCurrency(record.valor)}</p>
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                            <span className="rounded-full bg-[#f3f6f1] px-2 py-0.5">{formatTime(record.parsedDate)}</span>
+                            <span className="rounded-full bg-[#f3f6f1] px-2 py-0.5">Placa {record.cardPlate || "-"}</span>
+                            <span className="rounded-full bg-[#eef4f9] px-2 py-0.5 text-[#587c93]">{normalizeFuelType(record.tipoCombustivel)}</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                </ScrollArea>
+              </div>
+
+              <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-[#d8e4d2] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbf6_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+                <div className="border-b border-[#e8efe2] px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Centros de custo</p>
+                      <p className="mt-1 text-xs text-slate-500">Selecione um centro para filtrar os lançamentos.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="border-[#d9e6d1] bg-white text-[#557c4e]">
+                        {selectedDayCostCenters.length} centro(s)
+                      </Badge>
+                      <div className="flex rounded-lg border border-[#d9e6d1] bg-white p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setDailyRightPanelView("centers")}
+                          className={
+                            dailyRightPanelView === "centers"
+                              ? "rounded-md bg-[#f4faef] px-2.5 py-1 text-[11px] font-semibold text-[#426a32]"
+                              : "rounded-md px-2.5 py-1 text-[11px] font-semibold text-slate-500"
+                          }
+                        >
+                          Centros
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDailyRightPanelView("budget")}
+                          className={
+                            dailyRightPanelView === "budget"
+                              ? "rounded-md bg-[#f4faef] px-2.5 py-1 text-[11px] font-semibold text-[#426a32]"
+                              : "rounded-md px-2.5 py-1 text-[11px] font-semibold text-slate-500"
+                          }
+                        >
+                          Orçado
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-2 border-b border-[#e8efe2] bg-[#f6faf3] px-4 py-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-[#dde8d6] bg-white/95 px-3 py-3 shadow-sm shadow-[#eff5eb]/60">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total dos centros</p>
+                    <p className="mt-1 text-xl font-black tracking-tight text-slate-900">{formatCurrency(selectedDayCostCentersTotal)}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">Rateio consolidado do dia selecionado</p>
+                  </div>
+                  <div className={activeDailyCenter ? "rounded-xl border border-[#cfe2c6] bg-[#f5fbf1] px-3 py-3 shadow-sm shadow-[#eff5eb]/60" : "rounded-xl border border-[#dde8d6] bg-white/95 px-3 py-3 shadow-sm shadow-[#eff5eb]/60"}>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Filtro ativo</p>
+                    <p className="mt-1 truncate text-sm font-bold text-slate-900">{activeDailyCenter?.centroCusto ?? "Todos os centros"}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      {activeDailyCenter ? `${activeDailyCenter.transactions} lançamentos filtrados` : "Sem filtro específico aplicado"}
+                    </p>
+                  </div>
+                </div>
+                {dailyRightPanelView === "budget" ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#fbfdf9]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Telecom - Orçado x gasto do dia</p>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className={
+                          telecomBudgetTotals.spent > telecomBudgetTotals.budget
+                            ? "border-[#f1c8ba] bg-[#fff1eb] text-[#b85e54]"
+                            : "border-[#d7e4cf] bg-[#f5faf1] text-[#4f7d48]"
+                        }
+                      >
+                        {formatCurrency(telecomBudgetTotals.spent)} / {formatCurrency(telecomBudgetTotals.budget)}
+                      </Badge>
+                      {isMaster ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 border-[#cdddc3] px-2 text-[11px]"
+                          onClick={() => {
+                            setIsBudgetEditMode((current) => {
+                              if (current) {
+                                setBudgetDrafts({})
+                              }
+
+                              return !current
+                            })
+                          }}
+                        >
+                          {isBudgetEditMode ? "Concluir" : "Editar"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex-1 overflow-auto px-4 pb-3">
+                    {isDailyBudgetLoading ? <p className="text-xs text-slate-500">Carregando limites diários...</p> : null}
+                    {!isDailyBudgetLoading && telecomDailyBudgetRows.length === 0 ? (
+                      <p className="text-xs text-slate-500">Nenhum centro telecom configurado para orçamento diário.</p>
+                    ) : null}
+                    {!isDailyBudgetLoading && telecomDailyBudgetRows.length > 0 ? (
+                      <div className="overflow-hidden rounded-xl border border-[#e4ece0] bg-white shadow-sm shadow-[#eff4eb]/50">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-[#f6faf3] hover:bg-[#f6faf3]">
+                              <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Centro</TableHead>
+                              <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Orçado</TableHead>
+                              <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Gasto</TableHead>
+                              <TableHead className="text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Variação</TableHead>
+                              {isMaster && isBudgetEditMode ? (
+                                <TableHead className="w-[72px] text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Ação</TableHead>
+                              ) : null}
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {telecomDailyBudgetRows.map((row) => {
+                              const variance = row.spent - row.budget
+                              const isOverBudget = row.spent > row.budget
+                              const draftValue = budgetDrafts[row.centerCode]
+                              const draftBudget = typeof draftValue === "string" ? parseBudgetInputValue(draftValue) : row.budget
+                              const matchingCenterKey = getDailyCenterKeyByCode(row.centerCode)
+                              const isSelected = matchingCenterKey !== null && activeDailyCenterKey === matchingCenterKey
+
+                              return (
+                                <TableRow
+                                  key={`daily-modal-${row.centerCode}`}
+                                  className={isSelected ? "bg-[#f4faef] hover:bg-[#f4faef]" : "hover:bg-[#fafcf9]"}
+                                >
+                                  <TableCell className="max-w-[220px]">
+                                    <button
+                                      type="button"
+                                      className="min-w-0 text-left"
+                                      onClick={() => {
+                                        if (!matchingCenterKey) return
+                                        setSelectedDailyCenterKey((current) => (current === matchingCenterKey ? null : matchingCenterKey))
+                                      }}
+                                    >
+                                      <p className="truncate text-xs font-semibold text-slate-800">{row.centerLabel}</p>
+                                      <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                                        {matchingCenterKey ? "Clique para filtrar os lançamentos" : "Sem lançamentos neste dia"}
+                                      </p>
+                                    </button>
+                                  </TableCell>
+                                  <TableCell>
+                                    {isMaster && isBudgetEditMode ? (
+                                      <Input
+                                        value={draftValue ?? String(row.budget).replace(".", ",")}
+                                        onChange={(event) =>
+                                          setBudgetDrafts((current) => ({
+                                            ...current,
+                                            [row.centerCode]: event.target.value,
+                                          }))
+                                        }
+                                        className="h-8 w-24 bg-white text-xs"
+                                      />
+                                    ) : (
+                                      <span className="text-sm font-semibold text-slate-900">{formatCurrency(row.budget)}</span>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    <span className="text-sm font-semibold text-slate-900">{formatCurrency(row.spent)}</span>
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <span
+                                      className={
+                                        isOverBudget
+                                          ? "inline-flex rounded-full bg-[#fff1ef] px-2 py-0.5 text-[10px] font-bold text-[#c24d4d]"
+                                          : "inline-flex rounded-full bg-[#eef8ef] px-2 py-0.5 text-[10px] font-bold text-[#3f7a46]"
+                                      }
+                                    >
+                                      {getBudgetVarianceLabel(variance)}
+                                    </span>
+                                  </TableCell>
+                                  {isMaster && isBudgetEditMode ? (
+                                    <TableCell className="text-right">
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        className="h-8 px-2 text-[11px]"
+                                        disabled={savingBudgetCenterCode === row.centerCode || !Number.isFinite(draftBudget) || draftBudget < 0}
+                                        onClick={() => void handleSaveBudgetRow(row)}
+                                      >
+                                        Salvar
+                                      </Button>
+                                    </TableCell>
+                                  ) : null}
+                                </TableRow>
+                              )
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : null}
+
+                    <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-[#e4ece0] bg-white/85 px-3 py-2.5 shadow-sm shadow-[#eff4eb]/50">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Status consolidado</p>
+                        <p className="mt-0.5 text-sm font-bold text-slate-900">
+                          {telecomBudgetTotals.spent > telecomBudgetTotals.budget ? "Acima do orçado" : "Dentro do orçado"}
+                        </p>
+                      </div>
+                      <p className={telecomBudgetTotals.spent > telecomBudgetTotals.budget ? "rounded-full bg-[#fff2f0] px-2.5 py-1 text-[11px] font-bold text-[#c24d4d]" : "rounded-full bg-[#eef8ef] px-2.5 py-1 text-[11px] font-bold text-[#3f7a46]"}>
+                        {getBudgetVarianceLabel(telecomBudgetTotals.spent - telecomBudgetTotals.budget)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                ) : null}
+                {dailyRightPanelView === "centers" ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-[#eef3eb]">
+                  <div className="border-b border-[#e8efe2] px-4 py-2.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Lista completa dos centros do dia</p>
+                  </div>
+                  <ScrollArea className="min-h-0 h-full flex-1 px-4 py-3">
+                  {selectedDayCostCenters.length === 0 ? (
+                    <p className="mt-4 text-sm text-slate-500">Sem rateio para exibir.</p>
+                  ) : (
+                    <div className="space-y-2.5 pb-1">
+                      {selectedDayCostCenters.map((center) => (
+                        <button
+                          key={center.centroCusto}
+                          type="button"
+                          onClick={() => setSelectedDailyCenterKey((current) => (current === center.key ? null : center.key))}
+                          className={
+                            activeDailyCenterKey === center.key
+                              ? "w-full rounded-xl border border-[#8fb78f] bg-[#f4faef] px-3 py-3 text-left shadow-sm"
+                              : "w-full rounded-xl border border-[#e8efe2] bg-white px-3 py-3 text-left shadow-sm shadow-[#eef4ea]/35 transition-colors hover:border-[#b8d2ae] hover:bg-[#f8fbf6]"
+                          }
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-800">{center.centroCusto}</p>
+                              {activeDailyCenterKey === center.key ? <p className="mt-0.5 text-[10px] font-medium text-[#4f7d48]">Filtro ativo nos lançamentos</p> : null}
+                            </div>
+                            <p className="shrink-0 text-sm font-bold text-slate-900">{formatCurrency(center.total)}</p>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                            <span>{center.transactions} lançamentos</span>
+                            <span>{center.drivers} motoristas</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  </ScrollArea>
+                </div>
+                ) : null}
+              </div>
+            </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isWeeklyDetailOpen} onOpenChange={setIsWeeklyDetailOpen}>
+        <DialogContent
+          className="grid h-[95vh] w-[98vw] max-w-[98vw] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden border-[#d8dfd1] bg-[linear-gradient(180deg,#f9fcf7_0%,#eef4ea_100%)] p-0 text-slate-900 sm:max-w-[98vw]"
+          showCloseButton
+        >
+          <DialogHeader className="border-b border-[#dfe8d9] px-6 py-5 text-left">
+            <DialogTitle className="text-2xl text-slate-900">
+              {selectedWeekRange
+                ? `Detalhamento semanal - ${formatCompactDate(selectedWeekRange.start)} a ${formatCompactDate(selectedWeekRange.end)}`
+                : "Detalhamento semanal"}
+            </DialogTitle>
+            <DialogDescription className="text-slate-600">
+              {selectedWeekScopedRecords.length} lançamentos filtrados - {selectedWeekCostCenters.length} centros de custo - Total {formatCurrency(selectedWeeklyPoint?.total ?? 0)}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-h-0 overflow-hidden px-5 py-4 lg:px-6">
+            <div className="flex h-full min-h-0 flex-col gap-3">
+              <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-[#d8e4d2] bg-white/90 px-4 py-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="weekly-scope-filter" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Escopo</Label>
+                  <Select
+                    value={weeklyScopeFilter}
+                    onValueChange={(value) => {
+                      setWeeklyScopeFilter(value as WeeklyScopeFilter)
+                      setSelectedWeeklyCenterKey(null)
+                    }}
+                  >
+                  <SelectTrigger id="weekly-scope-filter" className="h-9 bg-white">
+                    <SelectValue placeholder="Selecione o escopo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="telecom">Telecom</SelectItem>
+                    <SelectItem value="engineering">Engenharia</SelectItem>
+                  </SelectContent>
+                </Select>
+                </div>
+                <p className="pb-1 text-xs text-slate-500">Escolha Telecom, Engenharia ou todos os centros de custo.</p>
+              </div>
+
+              <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.85fr)]">
+                  <div className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] rounded-xl border border-[#d8e4d2] bg-white/90">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e8efe2] px-4 py-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Lançamentos da semana</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {activeWeeklyCenterKey
+                            ? `Centro selecionado: ${selectedWeekCostCenters.find((center) => center.key === activeWeeklyCenterKey)?.centroCusto ?? ""}`
+                            : "Todos os centros do escopo selecionado"}
+                        </p>
+                      </div>
+                      <span className="rounded-md border border-[#dce8d6] bg-[#f6fbf3] px-2 py-1 text-xs font-semibold text-[#4f7d48]">
+                        {selectedWeekRecordsForDisplay.length} lançamentos
+                      </span>
+                    </div>
+                    <div className="px-4 pt-3">
+                      <Input
+                        value={weeklyRecordsSearch}
+                        onChange={(event) => setWeeklyRecordsSearch(event.target.value)}
+                        placeholder="Buscar por colaborador ou placa"
+                        className="h-9 bg-white"
+                      />
+                    </div>
+                    <ScrollArea className="min-h-0 px-4 py-3">
+                    {selectedWeekRecordsForDisplay.length === 0 ? (
+                      <p className="text-sm text-slate-500">Não há lançamentos para o filtro selecionado.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {selectedWeekRecordsForDisplay.map((record) => {
+                          const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+
+                          return (
+                            <div key={`${record.dateTime}-${record.cardPlate}-${record.cpfMotorista}-${record.valor}`} className="rounded-lg border border-[#e8efe2] bg-white px-3 py-2.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="truncate text-sm font-semibold text-slate-800">{driver}</p>
+                                <p className="text-sm font-bold text-slate-900">{formatCurrency(record.valor)}</p>
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                                <span>{formatCompactDate(record.parsedDate)}</span>
+                                <span>{formatTime(record.parsedDate)}</span>
+                                <span>Placa {record.cardPlate || "-"}</span>
+                                <span>{normalizeFuelType(record.tipoCombustivel)}</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    </ScrollArea>
+                  </div>
+
+                  <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-[#d8e4d2] bg-[linear-gradient(180deg,#ffffff_0%,#f8fbf6_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.85)]">
+                    <div className="border-b border-[#e8efe2] px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Centros de custo</p>
+                          <p className="mt-1 text-xs text-slate-500">Selecione um centro para filtrar os lançamentos.</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="border-[#d9e6d1] bg-white text-[#557c4e]">
+                            {selectedWeekCostCenters.length} centro(s)
+                          </Badge>
+                          <div className="flex rounded-lg border border-[#d9e6d1] bg-white p-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setWeeklyRightPanelView("centers")}
+                              className={
+                                weeklyRightPanelView === "centers"
+                                  ? "rounded-md bg-[#f4faef] px-2.5 py-1 text-[11px] font-semibold text-[#426a32]"
+                                  : "rounded-md px-2.5 py-1 text-[11px] font-semibold text-slate-500"
+                              }
+                            >
+                              Centros
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setWeeklyRightPanelView("budget")}
+                              className={
+                                weeklyRightPanelView === "budget"
+                                  ? "rounded-md bg-[#f4faef] px-2.5 py-1 text-[11px] font-semibold text-[#426a32]"
+                                  : "rounded-md px-2.5 py-1 text-[11px] font-semibold text-slate-500"
+                              }
+                            >
+                              Orçado
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid gap-2 border-b border-[#e8efe2] bg-[#f6faf3] px-4 py-3 sm:grid-cols-2">
+                      <div className="rounded-xl border border-[#dde8d6] bg-white/95 px-3 py-3 shadow-sm shadow-[#eff5eb]/60">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total dos centros</p>
+                        <p className="mt-1 text-xl font-black tracking-tight text-slate-900">{formatCurrency(selectedWeekCostCentersTotal)}</p>
+                        <p className="mt-1 text-[11px] text-slate-500">Rateio consolidado da semana selecionada</p>
+                      </div>
+                      <div className={activeWeeklyCenter ? "rounded-xl border border-[#cfe2c6] bg-[#f5fbf1] px-3 py-3 shadow-sm shadow-[#eff5eb]/60" : "rounded-xl border border-[#dde8d6] bg-white/95 px-3 py-3 shadow-sm shadow-[#eff5eb]/60"}>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Filtro ativo</p>
+                        <p className="mt-1 truncate text-sm font-bold text-slate-900">{activeWeeklyCenter?.centroCusto ?? "Todos os centros"}</p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {activeWeeklyCenter ? `${activeWeeklyCenter.transactions} lançamentos filtrados` : "Sem filtro específico aplicado"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {weeklyRightPanelView === "budget" ? (
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#fbfdf9]">
+                      <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Telecom - Orçado x gasto da semana</p>
+                        <Badge
+                          variant="outline"
+                          className={
+                            telecomWeeklyBudgetTotals.spent > telecomWeeklyBudgetTotals.budget
+                              ? "border-[#f1c8ba] bg-[#fff1eb] text-[#b85e54]"
+                              : "border-[#d7e4cf] bg-[#f5faf1] text-[#4f7d48]"
+                          }
+                        >
+                          {formatCurrency(telecomWeeklyBudgetTotals.spent)} / {formatCurrency(telecomWeeklyBudgetTotals.budget)}
+                        </Badge>
+                      </div>
+                      <p className="px-4 pt-1 text-[10px] text-slate-500">Orçamento diário x {daysInSelectedWeek} dias da semana selecionada.</p>
+
+                      <div className="mt-3 flex-1 overflow-auto px-4 pb-3">
+                        {telecomWeeklyBudgetRows.length === 0 ? (
+                          <p className="text-xs text-slate-500">Nenhum centro telecom configurado para orçamento diário.</p>
+                        ) : (
+                          <div className="overflow-hidden rounded-xl border border-[#e4ece0] bg-white shadow-sm shadow-[#eff4eb]/50">
+                            <Table>
+                              <TableHeader>
+                                <TableRow className="bg-[#f6faf3] hover:bg-[#f6faf3]">
+                                  <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Centro</TableHead>
+                                  <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Orçado</TableHead>
+                                  <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Gasto</TableHead>
+                                  <TableHead className="text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Variação</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {telecomWeeklyBudgetRows.map((row) => {
+                                  const variance = row.spent - row.budget
+                                  const isOverBudget = row.spent > row.budget
+                                  const matchingCenterKey = getWeeklyCenterKeyByCode(row.centerCode)
+                                  const isSelected = matchingCenterKey !== null && activeWeeklyCenterKey === matchingCenterKey
+
+                                  return (
+                                    <TableRow
+                                      key={`weekly-modal-${row.centerCode}`}
+                                      className={isSelected ? "bg-[#f4faef] hover:bg-[#f4faef]" : "hover:bg-[#fafcf9]"}
+                                    >
+                                      <TableCell className="max-w-[220px]">
+                                        <button
+                                          type="button"
+                                          className="min-w-0 text-left"
+                                          onClick={() => {
+                                            if (!matchingCenterKey) return
+                                            setSelectedWeeklyCenterKey((current) => (current === matchingCenterKey ? null : matchingCenterKey))
+                                          }}
+                                        >
+                                          <p className="truncate text-xs font-semibold text-slate-800">{row.centerLabel}</p>
+                                          <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                                            {matchingCenterKey ? "Clique para filtrar os lançamentos" : "Sem lançamentos nesta semana"}
+                                          </p>
+                                        </button>
+                                      </TableCell>
+                                      <TableCell>
+                                        <span className="text-sm font-semibold text-slate-900">{formatCurrency(row.budget)}</span>
+                                      </TableCell>
+                                      <TableCell>
+                                        <span className="text-sm font-semibold text-slate-900">{formatCurrency(row.spent)}</span>
+                                      </TableCell>
+                                      <TableCell className="text-right">
+                                        <span
+                                          className={
+                                            isOverBudget
+                                              ? "inline-flex rounded-full bg-[#fff1ef] px-2 py-0.5 text-[10px] font-bold text-[#c24d4d]"
+                                              : "inline-flex rounded-full bg-[#eef8ef] px-2 py-0.5 text-[10px] font-bold text-[#3f7a46]"
+                                          }
+                                        >
+                                          {getBudgetVarianceLabel(variance)}
+                                        </span>
+                                      </TableCell>
+                                    </TableRow>
+                                  )
+                                })}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        )}
+
+                        <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-[#e4ece0] bg-white/85 px-3 py-2.5 shadow-sm shadow-[#eff4eb]/50">
+                          <div>
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Status consolidado</p>
+                            <p className="mt-0.5 text-sm font-bold text-slate-900">
+                              {telecomWeeklyBudgetTotals.spent > telecomWeeklyBudgetTotals.budget ? "Acima do orçado" : "Dentro do orçado"}
+                            </p>
+                          </div>
+                          <p className={telecomWeeklyBudgetTotals.spent > telecomWeeklyBudgetTotals.budget ? "rounded-full bg-[#fff2f0] px-2.5 py-1 text-[11px] font-bold text-[#c24d4d]" : "rounded-full bg-[#eef8ef] px-2.5 py-1 text-[11px] font-bold text-[#3f7a46]"}>
+                            {getBudgetVarianceLabel(telecomWeeklyBudgetTotals.spent - telecomWeeklyBudgetTotals.budget)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    ) : null}
+
+                    {weeklyRightPanelView === "centers" ? (
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-[#eef3eb]">
+                      <ScrollArea className="min-h-0 h-full flex-1 px-4 py-3">
+                      {selectedWeekCostCenters.length === 0 ? (
+                        <p className="mt-4 text-sm text-slate-500">Sem rateio para exibir.</p>
+                      ) : (
+                        <div className="space-y-2.5 pb-1">
+                          {selectedWeekCostCenters.map((center) => (
+                            <button
+                              key={center.centroCusto}
+                              type="button"
+                              onClick={() => setSelectedWeeklyCenterKey((current) => (current === center.key ? null : center.key))}
+                              className={
+                                activeWeeklyCenterKey === center.key
+                                  ? "w-full rounded-xl border border-[#8fb78f] bg-[#f4faef] px-3 py-3 text-left shadow-sm"
+                                  : "w-full rounded-xl border border-[#e8efe2] bg-white px-3 py-3 text-left shadow-sm shadow-[#eef4ea]/35 transition-colors hover:border-[#b8d2ae] hover:bg-[#f8fbf6]"
+                              }
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-slate-800">{center.centroCusto}</p>
+                                  {activeWeeklyCenterKey === center.key ? <p className="mt-0.5 text-[10px] font-medium text-[#4f7d48]">Filtro ativo nos lançamentos</p> : null}
+                                </div>
+                                <p className="shrink-0 text-sm font-bold text-slate-900">{formatCurrency(center.total)}</p>
+                              </div>
+                              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                <span>{center.transactions} lançamentos</span>
+                                <span>{center.drivers} motoristas</span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      </ScrollArea>
+                    </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
         <Card className="border-[#d8dfd1] bg-white shadow-sm">

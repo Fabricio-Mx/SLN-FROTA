@@ -9,8 +9,9 @@ export interface AppUser {
   isMaster?: boolean
 }
 
-export type EmpresaLocacao = 'localiza' | 'lok_motors' | 'movida' | 'veiculo_sln' | string
+export type EmpresaLocacao = 'localiza' | 'lok_motors' | '4loc' | 'veiculo_sln' | string
 export type FornecedorProprio =
+  | 'veiculo_sln'
   | 'bradesco_financiamento'
   | 'banco_pan'
   | 'banco_volkswagen'
@@ -63,6 +64,7 @@ export interface Colaborador {
   telefone: string
   email: string
   departamento: string
+  centroCusto: string
   cep: string
   endereco: string
   dataVencimentoCNH: string

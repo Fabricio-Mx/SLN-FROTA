@@ -42,10 +42,14 @@ export async function GET() {
       (authUsers?.users || []).map((user) => [user.id, user.user_metadata || {}])
     )
 
-    const users = (data || []).map((profile) => ({
-      ...profile,
-      avatar_url: metadataByUserId.get(profile.id)?.avatar_url || null,
-    }))
+    const users = (data || []).map((profile) => {
+      const metadata = metadataByUserId.get(profile.id)
+
+      return {
+        ...profile,
+        avatar_url: metadata?.avatar_url || profile.avatar_url || null,
+      }
+    })
 
     return NextResponse.json({ users })
   } catch (err) {

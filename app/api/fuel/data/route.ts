@@ -5,10 +5,13 @@ import {
   getFuelRecordsForMonth,
   readLocalFuelData,
   readLocalFuelHistory,
+  readLocalFuelMetadata,
   reconcileFuelMonths,
   saveLocalFuelData,
   saveLocalFuelHistory,
+  saveLocalFuelMetadata,
   sanitizeFuelStorage,
+  type FuelImportMetadata,
   type FuelMonthArchive,
   type FuelRecord,
 } from "@/lib/fuel-storage"
@@ -28,6 +31,7 @@ export const runtime = "nodejs"
 const FUEL_FOLDER_NAME = "combustivel"
 const FUEL_DATA_FILE = "fuel_data.json"
 const FUEL_HISTORY_FILE = "fuel_history.json"
+const FUEL_META_FILE = "fuel_meta.json"
 const WEEKLY_COMPARISON_COLORS = ["#4E8F57", "#4F9BC9", "#D89A4A", "#D86C61"]
 const FUEL_CACHE_TTL_MS = 60_000
 
@@ -36,6 +40,7 @@ let fuelDataCache:
       cachedAt: number
       currentRecords: FuelRecord[]
       history: FuelMonthArchive[]
+      metadata: FuelImportMetadata
       loadedFromDrive: boolean
     }
   | null = null
@@ -152,19 +157,39 @@ function endOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999)
 }
 
+function normalizeRangeBounds(start: Date, end: Date) {
+  return start <= end
+    ? { start: new Date(start), end: new Date(end) }
+    : { start: new Date(end), end: new Date(start) }
+}
+
 function getAllFuelRecords(currentRecords: FuelRecord[], history: FuelMonthArchive[]): FuelRecord[] {
   return collapseFuelRecords([...currentRecords, ...history.flatMap((month) => month.records)])
 }
 
-function filterFuelRecordsByRange(records: FuelRecord[], start: Date, end: Date): FuelRecord[] {
-  const normalizedStart = start <= end ? startOfDay(start) : startOfDay(end)
-  const normalizedEnd = start <= end ? endOfDay(end) : endOfDay(start)
+function getRangeFilterDate(record: FuelRecord, dateField: "transaction" | "posting") {
+  const sourceValue = dateField === "posting" ? record.postingDate || record.dateTime : record.dateTime
+  return parseFuelDateTime(sourceValue)
+}
+
+function filterFuelRecordsByRange(
+  records: FuelRecord[],
+  start: Date,
+  end: Date,
+  dateField: "transaction" | "posting" = "transaction",
+  endExclusive = false
+): FuelRecord[] {
+  const normalizedBounds = normalizeRangeBounds(start, end)
+  const normalizedStart = startOfDay(normalizedBounds.start)
+  const normalizedEnd = endExclusive ? startOfDay(normalizedBounds.end) : endOfDay(normalizedBounds.end)
 
   return records.filter((record) => {
-    const recordDate = parseFuelDateTime(record.dateTime)
+    const recordDate = getRangeFilterDate(record, dateField)
     if (Number.isNaN(recordDate.getTime())) return false
 
-    return recordDate >= normalizedStart && recordDate <= normalizedEnd
+    return endExclusive
+      ? recordDate >= normalizedStart && recordDate < normalizedEnd
+      : recordDate >= normalizedStart && recordDate <= normalizedEnd
   })
 }
 
@@ -174,16 +199,22 @@ function readFuelCache() {
   return fuelDataCache
 }
 
-function writeFuelCache(currentRecords: FuelRecord[], history: FuelMonthArchive[], loadedFromDrive: boolean) {
+function writeFuelCache(
+  currentRecords: FuelRecord[],
+  history: FuelMonthArchive[],
+  metadata: FuelImportMetadata,
+  loadedFromDrive: boolean
+) {
   fuelDataCache = {
     cachedAt: Date.now(),
     currentRecords,
     history,
+    metadata,
     loadedFromDrive,
   }
 }
 
-async function syncFuelFilesToDrive(currentRecords: FuelRecord[], history: FuelMonthArchive[]) {
+async function syncFuelFilesToDrive(currentRecords: FuelRecord[], history: FuelMonthArchive[], metadata: FuelImportMetadata) {
   try {
     const rootId = getDriveRootFolderId()
     const driveClients = await getDriveClients()
@@ -193,6 +224,7 @@ async function syncFuelFilesToDrive(currentRecords: FuelRecord[], history: FuelM
         const fuelFolderId = await ensureFolder(drive, FUEL_FOLDER_NAME, rootId)
         await upsertJsonFile(drive, fuelFolderId, FUEL_DATA_FILE, currentRecords)
         await upsertJsonFile(drive, fuelFolderId, FUEL_HISTORY_FILE, history)
+        await upsertJsonFile(drive, fuelFolderId, FUEL_META_FILE, metadata)
         return true
       } catch {
         // Tenta o próximo cliente de autenticação.
@@ -211,20 +243,25 @@ export async function GET(req: Request) {
     const requestedMonth = url.searchParams.get("month")
     const requestedStart = parseDateParam(url.searchParams.get("start"))
     const requestedEnd = parseDateParam(url.searchParams.get("end"))
+    const dateField = url.searchParams.get("dateField") === "posting" ? "posting" : "transaction"
+    const endExclusive = url.searchParams.get("endExclusive") === "true"
     const currentMonthKey = getFuelMonthKey(new Date())
     const driveConfigured = isDriveConfigured()
     const cached = readFuelCache()
     let currentRecords: FuelRecord[]
     let history: FuelMonthArchive[]
+    let metadata: FuelImportMetadata
     let loadedFromDrive: boolean
 
     if (cached) {
       currentRecords = cached.currentRecords
       history = cached.history
+      metadata = cached.metadata
       loadedFromDrive = cached.loadedFromDrive
     } else {
       currentRecords = await readLocalFuelData()
       history = await readLocalFuelHistory()
+      metadata = await readLocalFuelMetadata()
       loadedFromDrive = false
 
       try {
@@ -236,15 +273,24 @@ export async function GET(req: Request) {
             const fuelFolderId = await ensureFolder(drive, FUEL_FOLDER_NAME, rootId)
             const currentFile = await findFile(drive, FUEL_DATA_FILE, fuelFolderId)
             const historyFile = await findFile(drive, FUEL_HISTORY_FILE, fuelFolderId)
+            const metaFile = await findFile(drive, FUEL_META_FILE, fuelFolderId)
 
             const driveCurrent = currentFile?.id ? await readJsonFile<FuelRecord[]>(drive, currentFile.id) : []
             const driveHistory = historyFile?.id ? await readJsonFile<FuelMonthArchive[]>(drive, historyFile.id) : []
+            const driveMetadata = metaFile?.id ? await readJsonFile<FuelImportMetadata>(drive, metaFile.id) : null
 
-            if (currentFile?.id || historyFile?.id) {
+            if (currentFile?.id || historyFile?.id || metaFile?.id) {
               currentRecords = Array.isArray(driveCurrent) ? driveCurrent : []
               history = Array.isArray(driveHistory) ? driveHistory : []
+              metadata = {
+                lastImportedAt:
+                  typeof driveMetadata?.lastImportedAt === "string"
+                    ? driveMetadata.lastImportedAt
+                    : currentFile?.modifiedTime ?? null,
+              }
               await saveLocalFuelData(currentRecords)
               await saveLocalFuelHistory(history)
+              await saveLocalFuelMetadata(metadata)
               loadedFromDrive = true
               break
             }
@@ -256,7 +302,7 @@ export async function GET(req: Request) {
         // Cai para o espelho local abaixo.
       }
 
-      writeFuelCache(currentRecords, history, loadedFromDrive)
+      writeFuelCache(currentRecords, history, metadata, loadedFromDrive)
     }
 
     const sanitized = sanitizeFuelStorage(currentRecords, history)
@@ -273,8 +319,9 @@ export async function GET(req: Request) {
     if (sanitized.removedCurrent > 0 || sanitized.removedHistory > 0 || reconciled.archivedMonths.length > 0) {
       await saveLocalFuelData(currentRecords)
       await saveLocalFuelHistory(history)
-      await syncFuelFilesToDrive(currentRecords, history)
-      writeFuelCache(currentRecords, history, loadedFromDrive)
+      await saveLocalFuelMetadata(metadata)
+      await syncFuelFilesToDrive(currentRecords, history, metadata)
+      writeFuelCache(currentRecords, history, metadata, loadedFromDrive)
     }
 
     const availableMonths = getFuelMonthOptions(currentRecords, history)
@@ -285,7 +332,7 @@ export async function GET(req: Request) {
 
     const records =
       requestedStart && requestedEnd
-        ? filterFuelRecordsByRange(getAllFuelRecords(currentRecords, history), requestedStart, requestedEnd)
+        ? filterFuelRecordsByRange(getAllFuelRecords(currentRecords, history), requestedStart, requestedEnd, dateField, endExclusive)
         : selectedMonth
           ? getFuelRecordsForMonth(selectedMonth, currentRecords, history)
           : []
@@ -301,6 +348,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       records,
       warning,
+      lastImportedAt: metadata.lastImportedAt,
       availableMonths,
       weeklyComparison,
       selectedMonth,

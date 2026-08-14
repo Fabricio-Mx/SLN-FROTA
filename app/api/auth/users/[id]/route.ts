@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin"
+import { deleteLocalAvatar } from "@/lib/avatar-storage"
 import { verifySession } from "@/lib/auth"
 import { USER_ROLES } from "@/lib/auth-shared"
 import { NextResponse } from "next/server"
@@ -23,15 +24,28 @@ export async function DELETE(
 
     const { data: authUser } = await supabase.auth.admin.getUserById(id)
     const driveFileId = authUser.user?.user_metadata?.avatar_drive_file_id as string | undefined
+  const localStorageKey = authUser.user?.user_metadata?.avatar_storage_key as string | undefined
 
     if (driveFileId) {
       try {
         const { getDriveClients } = await import("@/lib/google-drive")
-        const drive = (await getDriveClients())[0]
-        await drive.files.delete({ fileId: driveFileId })
+        const driveClients = await getDriveClients()
+
+        for (const drive of driveClients) {
+          try {
+            await drive.files.delete({ fileId: driveFileId, supportsAllDrives: true })
+            break
+          } catch {
+            // Tenta o próximo cliente disponível.
+          }
+        }
       } catch {
         // Ignora falha de limpeza do Drive para nao bloquear exclusao do usuario.
       }
+    }
+
+    if (localStorageKey) {
+      await deleteLocalAvatar(localStorageKey)
     }
 
     const { error: authError } = await supabase.auth.admin.deleteUser(id)

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getDriveClients, getDriveRootFolderId, isDriveConfigured } from "@/lib/google-drive"
+import { describeDriveError, getDriveClients, getDriveRootFolderId, isDriveConfigured } from "@/lib/google-drive"
 
 export async function GET() {
   if (!isDriveConfigured()) {
@@ -16,6 +16,7 @@ export async function GET() {
   try {
     const rootId = getDriveRootFolderId()
     const driveClients = await getDriveClients()
+    let lastDriveError: string | null = null
 
     for (const drive of driveClients) {
       try {
@@ -32,8 +33,8 @@ export async function GET() {
             folderName: response.data.name ?? null,
           })
         }
-      } catch {
-        // Tenta o proximo cliente configurado.
+      } catch (error) {
+        lastDriveError = describeDriveError(error)
       }
     }
 
@@ -41,6 +42,7 @@ export async function GET() {
       {
         ok: false,
         error: "Conta do Drive não carregada.",
+        driveError: lastDriveError,
         hint: "Verifique a pasta compartilhada e as credenciais da conta de serviço.",
       },
       { status: 503 }

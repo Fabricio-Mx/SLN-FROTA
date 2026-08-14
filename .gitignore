@@ -28,3 +28,10 @@ yarn-error.log*
 next-env.d.ts
 .vercel
 .env*.local
+
+# local data mirror (contains real PII: names, CPF, plates, values)
+/data/
+
+# ad-hoc analysis scratch files (contain real PII, never commit)
+/feb_prod*.json
+/feb_dup_groups.json

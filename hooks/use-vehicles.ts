@@ -254,11 +254,12 @@ const fetcher = async (): Promise<Vehicle[]> => {
   })
 }
 
-export function useVehicles() {
-  const { data, error, isLoading } = useSWR<Vehicle[]>(SWR_KEY, fetcher, SWR_OPTIONS)
+export function useVehicles(enabled = true) {
+  const { data, error, isLoading } = useSWR<Vehicle[]>(enabled ? SWR_KEY : null, fetcher, SWR_OPTIONS)
   const vehicles = data ?? []
 
   useEffect(() => {
+    if (!enabled) return
     if (typeof window === "undefined") return
     if (isLoading) return
     if (localStorage.getItem(MIGRATION_KEY) === "1") return
@@ -283,7 +284,7 @@ export function useVehicles() {
     }
 
     migrate()
-  }, [isLoading, vehicles.length])
+  }, [enabled, isLoading, vehicles.length])
 
   const addVehicle = async (formData: VehicleFormData): Promise<Vehicle> => {
     const supabase = createClient()

@@ -24,3 +24,7 @@ export function useFuelDataContext() {
 
   return context
 }
+
+export function useOptionalFuelDataContext() {
+  return useContext(FuelDataContext)
+}

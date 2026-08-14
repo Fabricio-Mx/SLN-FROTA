@@ -8,6 +8,26 @@ import { Button } from "@/components/ui/button"
 
 const DASHBOARD_BOOT_STORAGE_KEY = "dashboard-entry-boot-complete"
 
+function readBootCompletionFlag() {
+  if (typeof window === "undefined") return false
+
+  try {
+    return window.sessionStorage.getItem(DASHBOARD_BOOT_STORAGE_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function writeBootCompletionFlag() {
+  if (typeof window === "undefined") return
+
+  try {
+    window.sessionStorage.setItem(DASHBOARD_BOOT_STORAGE_KEY, "1")
+  } catch {
+    // Ignore storage failures so the dashboard can still render.
+  }
+}
+
 type BootServiceState = {
   label: string
   ok: boolean | null
@@ -74,6 +94,71 @@ function getGaugeTargetProgress(services: BootServiceState[]) {
   return completedCount / services.length
 }
 
+function getProgressSummary(progress: number, activeService: BootServiceState | undefined, isComplete: boolean, hasError: boolean) {
+  if (hasError) {
+    return "Carregamento concluído com avisos. Revendo integrações do sistema."
+  }
+
+  if (isComplete) {
+    return "Tudo pronto. Preparando a abertura do painel."
+  }
+
+  if (progress < 0.18) {
+    return "Preparando ambiente e iniciando validações."
+  }
+
+  if (progress < 0.52) {
+    return activeService?.message || "Conectando os serviços principais da operação."
+  }
+
+  if (progress < 0.84) {
+    return activeService?.message || "Conferindo dados e integrações da frota."
+  }
+
+  return "Finalizando verificações e organizando o painel inicial."
+}
+
+function getProgressHeadline(progress: number, activeService: BootServiceState | undefined, isComplete: boolean, hasError: boolean) {
+  if (hasError) {
+    return "Revisando integrações da operação"
+  }
+
+  if (isComplete) {
+    return "Painel pronto para abrir"
+  }
+
+  if (activeService?.label === "Supabase") {
+    return "Conectando a base principal"
+  }
+
+  if (activeService?.label === "Google Drive") {
+    return "Sincronizando arquivos da operação"
+  }
+
+  if (activeService?.label === "Backup") {
+    return "Validando proteção e rotina de backup"
+  }
+
+  if (activeService?.label === "Dados do painel") {
+    return "Montando a visão inicial da frota"
+  }
+
+  if (progress < 0.22) {
+    return "Preparando ambiente da frota"
+  }
+
+  if (progress < 0.7) {
+    return "Verificando integrações essenciais"
+  }
+
+  return "Finalizando carregamento do painel"
+}
+
+function getGaugeSegmentProgress(progress: number, startFraction: number, endFraction: number) {
+  const normalized = (progress - startFraction) / (endFraction - startFraction)
+  return Math.min(1, Math.max(0, normalized))
+}
+
 function polarToCartesian(centerX: number, centerY: number, radius: number, angleInDegrees: number) {
   const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180
   const x = centerX + radius * Math.cos(angleInRadians)
@@ -127,6 +212,45 @@ function DashboardBootScreen({
   const gaugeEndAngle = gaugeStartAngle + gaugeSweep
   const needleRotation = gaugeStartAngle + progress * gaugeSweep
   const activeService = services.find((service) => service.ok === null && service.message === service.loadingMessage)
+  const activeServiceIndex = services.findIndex((service) => service.ok === null && service.message === service.loadingMessage)
+  const progressPercent = Math.min(100, Math.max(0, progress * 100))
+  const progressLabel = isComplete || progressPercent >= 99.95 ? "100%" : `${progressPercent.toFixed(1)}%`
+  const progressSummary = getProgressSummary(progress, activeService, isComplete, hasError)
+  const progressHeadline = getProgressHeadline(progress, activeService, isComplete, hasError)
+  const gaugeSegments = [
+    {
+      key: "cool",
+      path: buildArcPath(180, 180, 126, gaugeStartAngle, 286),
+      baseColor: "rgba(88,220,255,0.26)",
+      activeColor: "#7debff",
+      glowColor: "rgba(88,220,255,0.48)",
+      progress: getGaugeSegmentProgress(progress, 0, 62 / gaugeSweep),
+    },
+    {
+      key: "warm",
+      path: buildArcPath(180, 180, 126, 286, 345),
+      baseColor: "rgba(240,215,93,0.24)",
+      activeColor: "#ffe580",
+      glowColor: "rgba(240,215,93,0.4)",
+      progress: getGaugeSegmentProgress(progress, 62 / gaugeSweep, 121 / gaugeSweep),
+    },
+    {
+      key: "hot",
+      path: buildArcPath(180, 180, 126, 345, 32),
+      baseColor: "rgba(240,147,48,0.22)",
+      activeColor: "#ffb76a",
+      glowColor: "rgba(240,147,48,0.4)",
+      progress: getGaugeSegmentProgress(progress, 121 / gaugeSweep, 168 / gaugeSweep),
+    },
+    {
+      key: "redline",
+      path: buildArcPath(180, 180, 126, 32, 136),
+      baseColor: "rgba(239,79,57,0.2)",
+      activeColor: "#ff7a66",
+      glowColor: "rgba(239,79,57,0.4)",
+      progress: getGaugeSegmentProgress(progress, 168 / gaugeSweep, 1),
+    },
+  ]
   const gaugeLabels = [
     { label: "0", angle: 224, radius: 114, size: 31, color: "#b2f3ff" },
     { label: "1", angle: 248, radius: 114, size: 31, color: "#b2f3ff" },
@@ -142,7 +266,7 @@ function DashboardBootScreen({
   ]
 
   return (
-    <div className="relative h-[100dvh] overflow-hidden bg-[radial-gradient(circle_at_top,#f5f8ef_0%,#ffffff_52%,#eef6e7_100%)]">
+    <div className="relative min-h-[100dvh] overflow-x-hidden overflow-y-auto bg-[radial-gradient(circle_at_top,#f5f8ef_0%,#ffffff_52%,#eef6e7_100%)]">
       <div className="absolute left-0 top-0 h-[34vh] w-[68vw] rounded-br-[3.5rem] bg-[linear-gradient(135deg,#76b521_0%,#65a41b_50%,#8acb35_100%)] shadow-[0_20px_50px_rgba(91,145,32,0.28)]" />
       <div className="absolute left-[20%] top-0 h-[40vh] w-24 rotate-[40deg] bg-white/90 shadow-[0_0_24px_rgba(255,255,255,0.45)]" />
       <div className="absolute right-0 bottom-0 h-[28vh] w-[32vw] rounded-tl-[3rem] bg-[linear-gradient(135deg,#6fb51d_0%,#5ca117_80%,#8ccb36_100%)]" />
@@ -151,8 +275,8 @@ function DashboardBootScreen({
       <div className="absolute left-[-6%] bottom-[8%] h-64 w-64 rounded-full border-[26px] border-[#dbeec1]/55" />
       <div className="absolute left-[14%] bottom-[-4%] h-52 w-52 rounded-full border-[20px] border-[#e6f4d6]/60" />
 
-      <div className="relative mx-auto flex h-[100dvh] w-full items-center justify-center px-4 py-4 sm:px-6 lg:px-8">
-        <div className="relative h-[calc(100dvh-2rem)] w-full max-w-[92rem] overflow-hidden rounded-[2.4rem] border border-[#d8e7c0] bg-white/92 shadow-[0_42px_120px_rgba(73,103,30,0.18)] backdrop-blur">
+      <div className="relative mx-auto flex min-h-[100dvh] w-full items-start justify-center px-3 py-3 sm:px-4 sm:py-4 lg:items-center lg:px-6 lg:py-5 xl:px-8">
+        <div className="relative min-h-[calc(100dvh-0.75rem)] w-full max-w-[92rem] overflow-hidden rounded-[1.75rem] border border-[#d8e7c0] bg-white/92 shadow-[0_28px_70px_rgba(73,103,30,0.16)] backdrop-blur sm:min-h-[calc(100dvh-2rem)] sm:rounded-[2.1rem] lg:max-h-[calc(100dvh-2rem)]">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_18%,rgba(219,239,190,0.36),transparent_34%),radial-gradient(circle_at_62%_44%,rgba(255,241,203,0.18),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,251,242,0.92))]" />
           <div className="absolute -left-[12%] top-[7%] h-[20rem] w-[52rem] rotate-[-33deg] rounded-[3.4rem] bg-[linear-gradient(135deg,#7cbc22_0%,#69a91b_65%,#89cd34_100%)] shadow-[0_24px_60px_rgba(91,145,32,0.24)]" />
           <div className="absolute left-[17%] top-[-5%] h-[16rem] w-16 rotate-[40deg] bg-white/92 shadow-[0_0_28px_rgba(255,255,255,0.5)]" />
@@ -165,8 +289,8 @@ function DashboardBootScreen({
           <div className="absolute right-[8%] top-[48%] h-[2px] w-80 rotate-[36deg] rounded-full bg-[#efcf9c] shadow-[0_0_14px_rgba(231,153,40,0.22)]" />
           <div className="absolute right-[12%] bottom-[20%] h-[2px] w-72 rotate-[-32deg] rounded-full bg-[#efcf9c] shadow-[0_0_14px_rgba(231,153,40,0.2)]" />
 
-          <div className="relative h-full px-6 py-5 sm:px-8 lg:px-10">
-            <div className="absolute left-[2.4rem] top-[1.6rem] hidden w-[11rem] lg:block">
+          <div className="relative h-full px-4 py-4 sm:px-6 sm:py-5 lg:px-8 lg:py-6 xl:px-10">
+            <div className="absolute left-[2rem] top-[1.5rem] hidden w-[10rem] xl:block">
               <div className="rounded-[1.6rem] bg-white p-4 shadow-[0_16px_40px_rgba(15,23,42,0.12)]">
                 <div className="flex justify-center">
                   <Image src="/images/sln-logo.png" alt="SLN" width={84} height={84} className="h-20 w-20 object-contain" priority />
@@ -183,7 +307,7 @@ function DashboardBootScreen({
               </div>
             </div>
 
-            <div className="pointer-events-none absolute right-[8%] top-[20%] hidden h-[18rem] w-[19rem] lg:block">
+            <div className="pointer-events-none absolute right-[8%] top-[20%] hidden h-[18rem] w-[19rem] xl:block">
               <div className="absolute left-[52%] top-[8%] h-2.5 w-2.5 rounded-full bg-[#f0aa39] shadow-[0_0_14px_rgba(240,170,57,0.7)]" />
               <div className="absolute left-[10%] top-[72%] h-2.5 w-2.5 rounded-full bg-[#f0aa39] shadow-[0_0_14px_rgba(240,170,57,0.7)]" />
               <div className="absolute left-[36%] top-[92%] h-2.5 w-2.5 rounded-full bg-[#f0aa39] shadow-[0_0_14px_rgba(240,170,57,0.7)]" />
@@ -218,9 +342,9 @@ function DashboardBootScreen({
               </div>
             </div>
 
-            <div className="relative mx-auto flex h-full w-full max-w-[74rem] flex-col pt-4 pb-4">
-              <div className="relative z-10 flex flex-1 w-full flex-col items-center justify-center gap-5">
-                <div className="relative flex h-[22rem] w-[22rem] items-center justify-center sm:h-[25rem] sm:w-[25rem]">
+            <div className="relative mx-auto flex h-full w-full max-w-[74rem] flex-col pt-1 pb-2 sm:pt-2 sm:pb-3 lg:pt-3 lg:pb-4">
+              <div className="relative z-10 flex w-full flex-col items-center justify-center gap-3 sm:gap-4 lg:flex-1 lg:gap-5">
+                <div className="relative flex h-[14rem] w-[14rem] items-center justify-center sm:h-[17rem] sm:w-[17rem] md:h-[19rem] md:w-[19rem] lg:h-[21rem] lg:w-[21rem] xl:h-[24rem] xl:w-[24rem]">
                   <svg viewBox="0 0 360 360" className="h-full w-full overflow-visible drop-shadow-[0_30px_44px_rgba(15,23,42,0.34)]">
                     <defs>
                       <radialGradient id="gaugeFace" cx="50%" cy="40%" r="68%">
@@ -264,6 +388,13 @@ function DashboardBootScreen({
                       <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
                         <feGaussianBlur stdDeviation="8" />
                       </filter>
+                      <filter id="gaugeArcGlow" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="5" result="arcGlowBlur" />
+                        <feMerge>
+                          <feMergeNode in="arcGlowBlur" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
                     </defs>
 
                     <circle cx="180" cy="180" r="171" fill="url(#rimOuter)" />
@@ -274,10 +405,33 @@ function DashboardBootScreen({
                     <circle cx="180" cy="180" r="92" fill="url(#centerGlow)" opacity="0.85" />
                     <ellipse cx="142" cy="118" rx="58" ry="24" fill="rgba(121,192,255,0.18)" filter="url(#softGlow)" />
 
-                    <path d={buildArcPath(180, 180, 126, gaugeStartAngle, 286)} fill="none" stroke="#58dcff" strokeWidth="15" strokeLinecap="round" />
-                    <path d={buildArcPath(180, 180, 126, 286, 345)} fill="none" stroke="#f0d75d" strokeWidth="15" strokeLinecap="round" />
-                    <path d={buildArcPath(180, 180, 126, 345, 32)} fill="none" stroke="#f09330" strokeWidth="15" strokeLinecap="round" />
-                    <path d={buildArcPath(180, 180, 126, 32, 136)} fill="none" stroke="#ef4f39" strokeWidth="15" strokeLinecap="round" />
+                    {gaugeSegments.map((segment) => (
+                      <g key={segment.key}>
+                        <path d={segment.path} fill="none" stroke={segment.baseColor} strokeWidth="15" strokeLinecap="round" />
+                        <path
+                          d={segment.path}
+                          fill="none"
+                          stroke={segment.glowColor}
+                          strokeWidth="19"
+                          strokeLinecap="round"
+                          pathLength={1}
+                          strokeDasharray={`${segment.progress} 1`}
+                          strokeDashoffset={1 - segment.progress}
+                          filter="url(#gaugeArcGlow)"
+                          opacity={0.95}
+                        />
+                        <path
+                          d={segment.path}
+                          fill="none"
+                          stroke={segment.activeColor}
+                          strokeWidth="15"
+                          strokeLinecap="round"
+                          pathLength={1}
+                          strokeDasharray={`${segment.progress} 1`}
+                          strokeDashoffset={1 - segment.progress}
+                        />
+                      </g>
+                    ))}
                     <path d={buildArcPath(180, 180, 132, gaugeStartAngle, gaugeEndAngle)} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1.4" strokeDasharray="1.5 9" />
 
                     {Array.from({ length: 76 }).map((_, index) => {
@@ -334,7 +488,7 @@ function DashboardBootScreen({
                       REDLINE
                     </text>
 
-                    <g transform={`rotate(${needleRotation} 180 180)`} style={{ transition: "transform 700ms ease-out" }} filter="url(#needleGlow)">
+                    <g transform={`rotate(${needleRotation} 180 180)`} filter="url(#needleGlow)">
                       <circle cx="180" cy="180" r="12" fill="rgba(255,150,54,0.22)" />
                       <path d="M 180 76 L 187 178 L 180 190 L 173 178 Z" fill="url(#needleGradient)" />
                       <path d="M 180 87 L 184 177 L 180 186 L 176 177 Z" fill="url(#needleCore)" />
@@ -347,21 +501,22 @@ function DashboardBootScreen({
                   </svg>
                 </div>
 
-                <div className="w-full max-w-[34rem] rounded-[2rem] border border-[#deead0] bg-white/92 px-6 py-4 text-center shadow-[0_18px_44px_rgba(88,119,44,0.12)] backdrop-blur">
-                  <p className="text-sm font-semibold uppercase tracking-[0.32em] text-[#6a8f30]">Sistema de gestao de frota</p>
-                  <p className="mt-2 text-[1.8rem] font-semibold uppercase tracking-tight text-[#1b2234]">Carregando dados da frota...</p>
-                  <div className="mt-3 inline-flex items-center gap-3 rounded-full border border-[#d7e6bf] bg-[#f8fbf2] px-5 py-2 text-sm text-slate-600">
+                <div className="w-full max-w-[34rem] rounded-[1.4rem] border border-[#deead0] bg-white/92 px-4 py-3 text-center shadow-[0_16px_34px_rgba(88,119,44,0.10)] backdrop-blur sm:rounded-[1.7rem] sm:px-5 sm:py-4 lg:rounded-[2rem] lg:px-6">
+                  <p className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-[#6a8f30] sm:text-xs lg:text-sm lg:tracking-[0.32em]">Sistema de gestao de frota</p>
+                  <p className="mt-2 text-[1.15rem] font-semibold uppercase tracking-tight text-[#1b2234] sm:text-[1.35rem] md:text-[1.55rem] xl:text-[1.8rem]">{progressHeadline}</p>
+                  <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-[#d7e6bf] bg-[#f8fbf2] px-3 py-2 text-xs text-slate-600 sm:gap-3 sm:px-4 sm:text-sm lg:px-5">
                     <CircleDashed className="h-4.5 w-4.5 animate-spin text-[#7cb342]" />
-                    <span>{activeService?.message || (isComplete ? "Carregamento concluido sem erros." : "Validando informacoes iniciais.")}</span>
+                    <span className="truncate">{progressSummary}</span>
                   </div>
-                  <p className="mt-3 text-[2.3rem] font-bold text-[#1b2234]">{Math.round(progress * 100)}%</p>
+                  <p className="mt-3 text-[1.7rem] font-bold tabular-nums text-[#1b2234] sm:text-[2rem] xl:text-[2.3rem]">{progressLabel}</p>
                 </div>
               </div>
 
-              <div className="mt-3 w-full rounded-[2rem] border border-[#e0ebd1] bg-white/84 p-4 shadow-[0_16px_36px_rgba(88,119,44,0.10)] backdrop-blur lg:max-w-[68rem] lg:self-center">
-                <div className="grid gap-3 lg:grid-cols-3">
+              <div className="mt-2 w-full rounded-[1.5rem] border border-[#e0ebd1] bg-white/84 p-3 shadow-[0_12px_30px_rgba(88,119,44,0.08)] backdrop-blur sm:p-4 lg:mt-3 lg:max-w-[68rem] lg:self-center lg:rounded-[2rem]">
+                <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                   {services.map((service, index) => {
                     const Icon = getServiceIcon(service.label)
+                    const isActive = index === activeServiceIndex
                     const stateIcon = service.ok == null ? (
                       <Sparkles className="h-4 w-4 text-[#7aa63d]" />
                     ) : service.ok ? (
@@ -374,24 +529,34 @@ function DashboardBootScreen({
                       <div
                         key={service.label}
                         className={cn(
-                          "rounded-2xl border px-4 py-3 transition-colors",
-                          service.ok == null
-                            ? "border-[#dce8ce] bg-white"
-                            : service.ok
-                              ? "border-[#d7e8bf] bg-[#f6fbef]"
-                              : "border-[#f1c8ba] bg-[#fff4ee]"
+                          "rounded-[1.1rem] border px-3 py-3 transition-all duration-300 sm:px-4",
+                          isActive
+                            ? "border-[#9fcb57] bg-[linear-gradient(180deg,#ffffff_0%,#f4faea_100%)] shadow-[0_14px_28px_rgba(124,179,66,0.18)] ring-1 ring-[#d8ebb6]"
+                            : service.ok == null
+                              ? "border-[#dce8ce] bg-white"
+                              : service.ok
+                                ? "border-[#d7e8bf] bg-[#f6fbef]"
+                                : "border-[#f1c8ba] bg-[#fff4ee]"
                         )}
                       >
                         <div className="flex items-start gap-3">
-                          <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full bg-[#eef5e3] text-[#679b29]">
-                            <Icon className="h-5 w-5" />
+                          <div
+                            className={cn(
+                              "mt-0.5 flex h-9 w-9 items-center justify-center rounded-full sm:h-10 sm:w-10",
+                              isActive
+                                ? "bg-[#edf8da] text-[#6da12f] shadow-[0_0_0_6px_rgba(210,233,170,0.45)]"
+                                : "bg-[#eef5e3] text-[#679b29]"
+                            )}
+                          >
+                            <Icon className={cn("h-4.5 w-4.5 sm:h-5 sm:w-5", isActive ? "animate-pulse" : "")} />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                            <div className="flex items-center gap-2 text-[0.82rem] font-semibold text-slate-800 sm:text-sm">
                               <span>{index + 1}. {service.label}</span>
                               {stateIcon}
+                              {isActive ? <span className="rounded-full bg-[#ebf6d8] px-2 py-0.5 text-[0.62rem] font-bold uppercase tracking-[0.14em] text-[#6b982f]">Em andamento</span> : null}
                             </div>
-                            <p className="mt-1 text-sm text-slate-500">{service.message}</p>
+                            <p className={cn("mt-1 text-xs sm:text-sm", isActive ? "text-[#567127]" : "text-slate-500")}>{service.message}</p>
                           </div>
                         </div>
                       </div>
@@ -401,7 +566,7 @@ function DashboardBootScreen({
 
                 <div
                   className={cn(
-                    "mt-4 rounded-2xl border px-4 py-3 text-sm font-medium",
+                    "mt-3 rounded-[1.15rem] border px-3 py-3 text-xs font-medium sm:mt-4 sm:rounded-2xl sm:px-4 sm:text-sm",
                     hasError
                       ? "border-[#f0c4b4] bg-[#fff4ef] text-[#9a3412]"
                       : isComplete
@@ -437,47 +602,98 @@ function DashboardBootScreen({
 
 export function DashboardEntryGate({ children }: DashboardEntryGateProps) {
   const startedRef = useRef(false)
+  const animationFrameRef = useRef<number | null>(null)
+  const bootScreenExitTimeoutRef = useRef<number | null>(null)
+  const animatedProgressRef = useRef(0)
   const hasCompletedInSession = useSyncExternalStore(
     () => () => {},
-    () => sessionStorage.getItem(DASHBOARD_BOOT_STORAGE_KEY) === "1",
+    readBootCompletionFlag,
     () => false
   )
   const [hasCompletedBoot, setHasCompletedBoot] = useState(false)
   const [hasError, setHasError] = useState(false)
   const [retryToken, setRetryToken] = useState(0)
   const [services, setServices] = useState<BootServiceState[]>(INITIAL_SERVICES)
-  const [visualProgress, setVisualProgress] = useState(0)
+  const [animatedProgress, setAnimatedProgress] = useState(0)
   const isReady = hasCompletedInSession || hasCompletedBoot
-  const displayedProgress = hasCompletedInSession ? 1 : visualProgress
+  const [showBootScreen, setShowBootScreen] = useState(() => !isReady)
+  const targetProgress = isReady || hasError ? 1 : getGaugeTargetProgress(services)
 
   useEffect(() => {
+    animatedProgressRef.current = animatedProgress
+  }, [animatedProgress])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    if (bootScreenExitTimeoutRef.current !== null) {
+      window.clearTimeout(bootScreenExitTimeoutRef.current)
+      bootScreenExitTimeoutRef.current = null
+    }
+
     if (isReady) {
+      bootScreenExitTimeoutRef.current = window.setTimeout(() => {
+        setShowBootScreen(false)
+        bootScreenExitTimeoutRef.current = null
+      }, 460)
       return
     }
 
-    const targetProgress = getGaugeTargetProgress(services)
-    let frameId = 0
+    return () => {
+      if (bootScreenExitTimeoutRef.current !== null) {
+        window.clearTimeout(bootScreenExitTimeoutRef.current)
+        bootScreenExitTimeoutRef.current = null
+      }
+    }
+  }, [isReady])
 
-    const animate = () => {
-      setVisualProgress((currentValue) => {
-        const delta = targetProgress - currentValue
+  useEffect(() => {
+    if (typeof window === "undefined") return
 
-        if (Math.abs(delta) < 0.0025) {
-          return targetProgress
-        }
-
-        return currentValue + delta * 0.08
-      })
-
-      frameId = window.requestAnimationFrame(animate)
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
     }
 
-    frameId = window.requestAnimationFrame(animate)
+    const initialProgress = animatedProgressRef.current
+    const progressDelta = targetProgress - initialProgress
+
+    if (Math.abs(progressDelta) < 0.001) {
+      animatedProgressRef.current = targetProgress
+      return
+    }
+
+    const finishWeight = Math.min(1, Math.max(0, (Math.max(initialProgress, targetProgress) - 0.72) / 0.28))
+    const duration = Math.max(480, Math.min(2200, 560 + Math.abs(progressDelta) * 2600 + finishWeight * 520))
+    const startTime = window.performance.now()
+
+    const tick = (currentTime: number) => {
+      const elapsed = currentTime - startTime
+      const normalizedTime = Math.min(elapsed / duration, 1)
+      const smoothTime = normalizedTime * normalizedTime * (3 - 2 * normalizedTime)
+      const endEaseTime = 1 - Math.pow(1 - normalizedTime, 4)
+      const easedTime = smoothTime * (1 - finishWeight) + endEaseTime * finishWeight
+      const nextProgress = initialProgress + progressDelta * easedTime
+
+      animatedProgressRef.current = nextProgress
+      setAnimatedProgress(nextProgress)
+
+      if (normalizedTime < 1) {
+        animationFrameRef.current = window.requestAnimationFrame(tick)
+      } else {
+        animationFrameRef.current = null
+      }
+    }
+
+    animationFrameRef.current = window.requestAnimationFrame(tick)
 
     return () => {
-      window.cancelAnimationFrame(frameId)
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = null
+      }
     }
-  }, [isReady, services])
+  }, [targetProgress])
 
   useEffect(() => {
     if (isReady || startedRef.current) return
@@ -529,7 +745,7 @@ export function DashboardEntryGate({ children }: DashboardEntryGateProps) {
           setServices(nextServices.map((service) => ({ ...service })))
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 380))
+        await new Promise((resolve) => setTimeout(resolve, 250))
         if (cancelled) {
           startedRef.current = false
           return
@@ -544,16 +760,13 @@ export function DashboardEntryGate({ children }: DashboardEntryGateProps) {
       setHasError(hasAnyError)
 
       if (hasAnyError) {
-        setVisualProgress(1)
-
         if (process.env.NODE_ENV === "production") {
-          await new Promise((resolve) => setTimeout(resolve, 1200))
+          await new Promise((resolve) => setTimeout(resolve, 760))
           if (cancelled) {
             startedRef.current = false
             return
           }
-
-          sessionStorage.setItem(DASHBOARD_BOOT_STORAGE_KEY, "1")
+          writeBootCompletionFlag()
           setHasCompletedBoot(true)
         }
 
@@ -561,14 +774,13 @@ export function DashboardEntryGate({ children }: DashboardEntryGateProps) {
         return
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 600))
+      await new Promise((resolve) => setTimeout(resolve, 320))
       if (cancelled) {
         startedRef.current = false
         return
       }
 
-      sessionStorage.setItem(DASHBOARD_BOOT_STORAGE_KEY, "1")
-      setVisualProgress(1)
+      writeBootCompletionFlag()
       setHasCompletedBoot(true)
       startedRef.current = false
     }
@@ -581,28 +793,45 @@ export function DashboardEntryGate({ children }: DashboardEntryGateProps) {
     }
   }, [isReady, retryToken])
 
-  if (isReady) {
-    return <>{children}</>
-  }
-
   return (
-    <DashboardBootScreen
-      services={services}
-      progress={displayedProgress}
-      isComplete={!hasError && services.every((service) => service.ok === true)}
-      hasError={hasError}
-      onContinue={() => {
-        sessionStorage.setItem(DASHBOARD_BOOT_STORAGE_KEY, "1")
-        setVisualProgress(1)
-        setHasCompletedBoot(true)
-      }}
-      onRetry={() => {
-        startedRef.current = false
-        setHasError(false)
-        setServices(INITIAL_SERVICES)
-        setVisualProgress(0)
-        setRetryToken((currentValue) => currentValue + 1)
-      }}
-    />
+    <>
+      <div
+        className={cn(
+          "transition-[opacity,transform,filter] duration-700 ease-out will-change-transform",
+          isReady ? "opacity-100 translate-y-0 scale-100 blur-0" : "pointer-events-none opacity-0 translate-y-3 scale-[0.985] blur-[2px]"
+        )}
+      >
+        {children}
+      </div>
+
+      {showBootScreen ? (
+        <div
+          className={cn(
+            "fixed inset-0 z-50 transition-all duration-500 ease-out",
+            isReady ? "translate-y-2 opacity-0 pointer-events-none" : "translate-y-0 opacity-100"
+          )}
+        >
+          <DashboardBootScreen
+            services={services}
+            progress={animatedProgress}
+            isComplete={!hasError && services.every((service) => service.ok === true)}
+            hasError={hasError}
+            onContinue={() => {
+              writeBootCompletionFlag()
+              setHasCompletedBoot(true)
+            }}
+            onRetry={() => {
+              startedRef.current = false
+              setHasError(false)
+              setServices(INITIAL_SERVICES)
+              animatedProgressRef.current = 0
+              setAnimatedProgress(0)
+              setShowBootScreen(true)
+              setRetryToken((currentValue) => currentValue + 1)
+            }}
+          />
+        </div>
+      ) : null}
+    </>
   )
 }

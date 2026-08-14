@@ -10,6 +10,7 @@ import {
 } from "@/lib/cost-center-shared"
 import { readLocalCostCenterData, saveLocalCostCenterData } from "@/lib/cost-center-storage"
 import {
+  describeDriveError,
   ensureFolder,
   findFile,
   getDriveClients,
@@ -113,6 +114,7 @@ async function loadCostCenterDataset(): Promise<{
 
 async function persistCostCenterDataset(dataset: CostCenterDataset) {
   let drivePersisted = false
+  let driveError: string | null = null
 
   try {
     const rootId = getDriveRootFolderId()
@@ -123,19 +125,21 @@ async function persistCostCenterDataset(dataset: CostCenterDataset) {
         const fuelFolderId = await ensureFolder(drive, FUEL_FOLDER_NAME, rootId)
         await upsertJsonFile(drive, fuelFolderId, COST_CENTER_DATA_FILE, dataset)
         drivePersisted = true
+        driveError = null
         break
-      } catch {
-        // Tenta o proximo cliente.
+      } catch (error) {
+        driveError = describeDriveError(error)
       }
     }
-  } catch {
-    // Mantem apenas local se o Drive nao estiver acessivel.
+  } catch (error) {
+    driveError = describeDriveError(error)
   }
 
   const localPersisted = await saveLocalCostCenterData(dataset)
 
   return {
     drivePersisted,
+    driveError,
     localPersisted,
     storage: drivePersisted && localPersisted ? "drive+local" : drivePersisted ? "drive" : "local",
   }
@@ -208,12 +212,13 @@ export async function POST(req: Request) {
       records,
     }
 
-    const { drivePersisted, localPersisted, storage } = await persistCostCenterDataset(dataset)
+    const { drivePersisted, driveError, localPersisted, storage } = await persistCostCenterDataset(dataset)
 
     if (!drivePersisted && !localPersisted) {
       return NextResponse.json(
         {
           error: "Não foi possível salvar o centro de custo nem no Drive nem no armazenamento local. Verifique a configuração do Drive.",
+          driveError,
         },
         { status: 500 }
       )
@@ -277,11 +282,14 @@ export async function PATCH(req: Request) {
       ),
     }
 
-    const { drivePersisted, localPersisted, storage } = await persistCostCenterDataset(nextDataset)
+    const { drivePersisted, driveError, localPersisted, storage } = await persistCostCenterDataset(nextDataset)
 
     if (!drivePersisted && !localPersisted) {
       return NextResponse.json(
-        { error: "Não foi possível salvar a edição manual nem no Drive nem no armazenamento local." },
+        {
+          error: "Não foi possível salvar a edição manual nem no Drive nem no armazenamento local.",
+          driveError,
+        },
         { status: 500 }
       )
     }
@@ -326,11 +334,14 @@ export async function DELETE(req: Request) {
       records: nextRecords,
     }
 
-    const { drivePersisted, localPersisted, storage } = await persistCostCenterDataset(nextDataset)
+    const { drivePersisted, driveError, localPersisted, storage } = await persistCostCenterDataset(nextDataset)
 
     if (!drivePersisted && !localPersisted) {
       return NextResponse.json(
-        { error: "Não foi possível excluir o cadastro nem no Drive nem no armazenamento local." },
+        {
+          error: "Não foi possível excluir o cadastro nem no Drive nem no armazenamento local.",
+          driveError,
+        },
         { status: 500 }
       )
     }

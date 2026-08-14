@@ -43,6 +43,18 @@ function toMinutes(value: string): number | null {
   return hours * 60 + minutes
 }
 
+function normalizeSearchValue(value: string): string {
+  return value.toLowerCase().trim()
+}
+
+function normalizeDigits(value: string): string {
+  return value.replace(/\D/g, "")
+}
+
+function normalizePlate(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "")
+}
+
 type IndexedFuelRecord = {
   cardPlate: string
   cpfMotorista: string
@@ -54,7 +66,9 @@ type IndexedFuelRecord = {
   supervisor: string
   coordenador: string
   parsedDate: Date
-  searchText: string
+  normalizedPlate: string
+  normalizedCpf: string
+  normalizedDriverName: string
 }
 
 const FuelTransactionsRows = memo(function FuelTransactionsRows({
@@ -116,16 +130,9 @@ export function FuelTransactionsTable() {
           supervisor: matchedCostCenter?.supervisor ?? "",
           coordenador: matchedCostCenter?.coordenador ?? "",
           parsedDate,
-          searchText: [
-            record.cardPlate,
-            record.cpfMotorista,
-            record.nomeMotorista,
-            matchedCostCenter?.centroCusto ?? "",
-            matchedCostCenter?.supervisor ?? "",
-            matchedCostCenter?.coordenador ?? "",
-          ]
-            .join(" ")
-            .toLowerCase(),
+          normalizedPlate: normalizePlate(record.cardPlate),
+          normalizedCpf: normalizeDigits(record.cpfMotorista),
+          normalizedDriverName: normalizeSearchValue(record.nomeMotorista),
         }
       })
       .filter((record) => !Number.isNaN(record.parsedDate.getTime()))
@@ -154,7 +161,9 @@ export function FuelTransactionsTable() {
   }, [indexedRecords])
 
   const filtered = useMemo(() => {
-    const searchTerm = deferredSearch.trim().toLowerCase()
+    const searchTerm = normalizeSearchValue(deferredSearch)
+    const searchDigits = normalizeDigits(searchTerm)
+    const searchPlate = normalizePlate(searchTerm)
     const start = toDateOnly(fromDate)
     const end = toDateOnly(toDate)
     const startMinutes = toMinutes(fromTime)
@@ -165,7 +174,11 @@ export function FuelTransactionsTable() {
 
     return indexedRecords.filter((record) => {
       if (searchTerm) {
-        if (!record.searchText.includes(searchTerm)) return false
+        const matchesDriverName = record.normalizedDriverName.includes(searchTerm)
+        const matchesCpf = searchDigits.length > 0 && record.normalizedCpf.includes(searchDigits)
+        const matchesPlate = searchPlate.length > 0 && record.normalizedPlate.includes(searchPlate)
+
+        if (!matchesDriverName && !matchesCpf && !matchesPlate) return false
       }
 
       if (fuelType !== "todos") {
@@ -242,7 +255,7 @@ export function FuelTransactionsTable() {
               id="fuel-search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Placa do cartão, CPF ou motorista"
+              placeholder="Digite nome do motorista, placa ou CPF"
             />
           </div>
           <div className="space-y-1 xl:col-span-2">

@@ -37,6 +37,7 @@ const initialFormData: ColaboradorFormData = {
   telefone: "",
   email: "",
   departamento: "",
+  centroCusto: "",
   cep: "",
   endereco: "",
   dataVencimentoCNH: "",
@@ -74,8 +75,9 @@ export function ColaboradorModal({
         telefone: colaborador.telefone || "",
         email: colaborador.email || "",
         departamento: colaborador.departamento || "",
-        cep: colaborador.cep || "",
-        endereco: colaborador.endereco || "",
+        centroCusto: colaborador.centroCusto || "",
+        cep: "",
+        endereco: "",
         dataVencimentoCNH: colaborador.dataVencimentoCNH || "",
         documentos: colaborador.documentos || [],
         imagensVeiculo: colaborador.imagensVeiculo || [],
@@ -117,13 +119,6 @@ export function ColaboradorModal({
       .replace(/(\d{2})(\d)/, "($1) $2")
       .replace(/(\d{5})(\d)/, "$1-$2")
       .replace(/(-\d{4})\d+?$/, "$1")
-  }
-
-  const formatCEP = (value: string) => {
-    const numbers = value.replace(/\D/g, "")
-    return numbers
-      .replace(/(\d{5})(\d)/, "$1-$2")
-      .replace(/(-\d{3})\d+?$/, "$1")
   }
 
   const formatDateBr = (value: string) => {
@@ -337,17 +332,6 @@ export function ColaboradorModal({
       newErrors.departamento = "Departamento é obrigatório"
     }
 
-    const cepNumbers = formData.cep.replace(/\D/g, "")
-    if (!cepNumbers) {
-      newErrors.cep = "CEP é obrigatório"
-    } else if (cepNumbers.length !== 8) {
-      newErrors.cep = "CEP deve ter 8 dígitos"
-    }
-
-    if (!formData.endereco.trim()) {
-      newErrors.endereco = "Endereço é obrigatório"
-    }
-
     if (!formData.dataVencimentoCNH) {
       newErrors.dataVencimentoCNH = "Data de vencimento da CNH é obrigatória"
     }
@@ -361,7 +345,15 @@ export function ColaboradorModal({
 
     if (validateForm()) {
       const kmValue = selectedVeiculoKm.trim() === "" ? null : Number(selectedVeiculoKm)
-      onSave(formData, selectedVeiculoId, Number.isNaN(kmValue) ? null : kmValue)
+      onSave(
+        {
+          ...formData,
+          cep: "",
+          endereco: "",
+        },
+        selectedVeiculoId,
+        Number.isNaN(kmValue) ? null : kmValue,
+      )
       onOpenChange(false)
     }
   }
@@ -441,27 +433,13 @@ export function ColaboradorModal({
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="cep">CEP</Label>
+              <Label htmlFor="centroCusto">Centro de Custo</Label>
               <Input
-                id="cep"
-                inputMode="numeric"
-                placeholder="00000-000"
-                value={formData.cep}
-                onChange={(e) => setFormData({ ...formData, cep: formatCEP(e.target.value) })}
-                maxLength={9}
+                id="centroCusto"
+                placeholder="Ex: 101 - Operação"
+                value={formData.centroCusto}
+                onChange={(e) => setFormData({ ...formData, centroCusto: e.target.value })}
               />
-              {errors.cep ? <p className="text-sm text-destructive">{errors.cep}</p> : null}
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="endereco">Endereço</Label>
-              <Input
-                id="endereco"
-                placeholder="Rua, número, bairro, cidade"
-                value={formData.endereco}
-                onChange={(e) => setFormData({ ...formData, endereco: e.target.value })}
-              />
-              {errors.endereco ? <p className="text-sm text-destructive">{errors.endereco}</p> : null}
             </div>
 
             <div className="grid gap-2">

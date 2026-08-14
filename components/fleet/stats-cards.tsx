@@ -2,14 +2,15 @@
 
 import { useMemo } from "react"
 import useSWR from "swr"
-import { Car, Key, CreditCard, AlertTriangle, Users, Wrench, Settings, Fuel, Truck, Send, BadgeCheck } from "lucide-react"
+import { Car, Key, CreditCard, AlertTriangle, Wrench, Settings, Fuel, Send, BadgeCheck } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { fuelFetcher, FUEL_DATA_SWR_KEY, type FuelResponse } from "@/hooks/use-fuel-data"
 import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
+import { getFuelFinancialPostingCycleBounds } from "@/lib/fuel-billing"
 import { getMultaTotalValue } from "@/lib/multas"
 import { cn } from "@/lib/utils"
-import type { Vehicle, Colaborador, Multa } from "@/lib/types"
+import type { Vehicle, Multa } from "@/lib/types"
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -25,6 +26,14 @@ function formatShortDate(date: Date): string {
   }).format(date)
 }
 
+function formatFullDate(date: Date): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date)
+}
+
 function toDateInputValue(date: Date): string {
   const year = date.getFullYear()
   const month = `${date.getMonth() + 1}`.padStart(2, "0")
@@ -32,23 +41,8 @@ function toDateInputValue(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
-function getBillingCycleBounds(anchorDate: Date) {
-  if (anchorDate.getDate() >= 26) {
-    return {
-      start: new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 26),
-      end: new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 25),
-    }
-  }
-
-  return {
-    start: new Date(anchorDate.getFullYear(), anchorDate.getMonth() - 1, 26),
-    end: new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 25),
-  }
-}
-
 interface StatsCardsProps {
   vehicles: Vehicle[]
-  colaboradores: Colaborador[]
   multas: Multa[]
 }
 
@@ -127,14 +121,15 @@ const statCardVariants: Record<string, { cardClass: string; iconClass: string; g
   },
 }
 
-export function StatsCards({ vehicles, colaboradores, multas }: StatsCardsProps) {
-  const { monthlyTotal: monthlyFuelTotal, reportDate } = useFuelDataContext()
-  const totalColaboradores = colaboradores.length
-  const billingCycle = useMemo(() => getBillingCycleBounds(reportDate), [reportDate])
+export function StatsCards({ vehicles, multas }: StatsCardsProps) {
+  const { monthlyTotal: monthlyFuelTotal, reportDate, lastImportedAt } = useFuelDataContext()
+  const billingCycle = useMemo(() => getFuelFinancialPostingCycleBounds(reportDate), [reportDate])
   const billingCycleKey = useMemo(() => {
     const params = new URLSearchParams({
       start: toDateInputValue(billingCycle.start),
       end: toDateInputValue(billingCycle.end),
+      dateField: "posting",
+      endExclusive: "true",
     })
 
     return `${FUEL_DATA_SWR_KEY}?${params.toString()}`
@@ -149,18 +144,23 @@ export function StatsCards({ vehicles, colaboradores, multas }: StatsCardsProps)
     if (!billingCycleData?.records) return monthlyFuelTotal
     return billingCycleData.records.reduce((sum, record) => sum + record.valor, 0)
   }, [billingCycleData, monthlyFuelTotal])
+  const lastImportedLabel = useMemo(() => {
+    if (!lastImportedAt) return null
+
+    const parsed = new Date(lastImportedAt)
+    if (Number.isNaN(parsed.getTime())) return null
+
+    return formatFullDate(parsed)
+  }, [lastImportedAt])
 
   const stats = useMemo(() => {
     const fleetVehicles = vehicles.filter((vehicle) => vehicle.frota)
-    const agregadoVehicles = vehicles.filter((vehicle) => !vehicle.frota)
     const totalFleetVehicles = fleetVehicles.length
-    const totalAgregados = agregadoVehicles.length
     const alugados = fleetVehicles.filter((vehicle) => vehicle.tipoPropriedade === "alugado").length
     const proprios = fleetVehicles.filter((vehicle) => vehicle.tipoPropriedade === "proprio").length
     const naOficina = fleetVehicles.filter((vehicle) => vehicle.naOficina).length
     const paraRevisao = fleetVehicles.filter((vehicle) => isVehicleDueForReview(vehicle)).length
     const contratosVencendoFrota = countExpiringContracts(fleetVehicles)
-    const contratosVencendoAgregados = countExpiringContracts(agregadoVehicles)
     const valorEnviadoFrota = multas
       .filter((multa) => multa.status === "enviado")
       .reduce((sum, multa) => sum + getMultaTotalValue(multa), 0)
@@ -170,118 +170,109 @@ export function StatsCards({ vehicles, colaboradores, multas }: StatsCardsProps)
       .reduce((sum, multa) => sum + getMultaTotalValue(multa), 0)
     const quantidadePagaRh = multas.filter((multa) => multa.rhStatus === "pago").length
 
-    return [
-      {
-        label: "Veículos Frota",
-        value: totalFleetVehicles.toString(),
-        icon: Car,
-        color: "bg-primary/10 text-primary",
-      },
-      {
-        label: "Próprios",
-        value: proprios.toString(),
-        icon: Key,
-        color: "bg-accent/10 text-accent",
-      },
-      {
-        label: "Alugados",
-        value: alugados.toString(),
-        icon: CreditCard,
-        color: "bg-chart-2/10 text-chart-2",
-      },
-      {
-        label: "Na Oficina",
-        value: naOficina.toString(),
-        icon: Wrench,
-        color: "bg-chart-3/10 text-chart-3",
-      },
-      {
-        label: "Para Revisão",
-        value: paraRevisao.toString(),
-        icon: Settings,
-        color: "bg-chart-4/10 text-chart-4",
-      },
-      {
-        label: "Contratos a Vencer Frota",
-        value: contratosVencendoFrota.toString(),
-        icon: AlertTriangle,
-        color: "bg-destructive/10 text-destructive",
-      },
-      {
-        label: "Veículos Agregados",
-        value: totalAgregados.toString(),
-        icon: Truck,
-        color: "bg-sky-500/10 text-sky-600",
-      },
-      {
-        label: "Contratos a Vencer Agregados",
-        value: contratosVencendoAgregados.toString(),
-        icon: AlertTriangle,
-        color: "bg-amber-500/10 text-amber-600",
-      },
-      {
-        label: "Faturamento Mensal",
-        value: formatCurrency(billingCycleFuelTotal),
-        helperText: `Ciclo ${formatShortDate(billingCycle.start)} a ${formatShortDate(billingCycle.end)}`,
-        icon: Fuel,
-        color: "bg-emerald-500/10 text-emerald-600",
-      },
-      {
-        label: "Multas Enviadas pela Frota",
-        value: formatCurrency(valorEnviadoFrota),
-        helperText: `${quantidadeEnviadaFrota} ${quantidadeEnviadaFrota === 1 ? "multa enviada" : "multas enviadas"}`,
-        icon: Send,
-        color: "bg-sky-500/10 text-sky-600",
-      },
-      {
-        label: "Multas Pagas pelo RH",
-        value: formatCurrency(valorPagoRh),
-        helperText: `${quantidadePagaRh} ${quantidadePagaRh === 1 ? "multa paga" : "multas pagas"}`,
-        icon: BadgeCheck,
-        color: "bg-emerald-500/10 text-emerald-600",
-      },
-      {
-        label: "Colaboradores",
-        value: totalColaboradores.toString(),
-        helperText: `${vehicles.filter((vehicle) => vehicle.colaboradorId).length} com veículo vinculado`,
-        icon: Users,
-        color: "bg-primary/10 text-primary",
-      },
-    ]
-  }, [billingCycle.end, billingCycle.start, billingCycleFuelTotal, multas, totalColaboradores, vehicles])
+    return {
+      primary: [
+        {
+          label: "Veículos Frota",
+          value: totalFleetVehicles.toString(),
+          icon: Car,
+          color: "bg-primary/10 text-primary",
+        },
+        {
+          label: "Próprios",
+          value: proprios.toString(),
+          icon: Key,
+          color: "bg-accent/10 text-accent",
+        },
+        {
+          label: "Alugados",
+          value: alugados.toString(),
+          icon: CreditCard,
+          color: "bg-chart-2/10 text-chart-2",
+        },
+        {
+          label: "Na Oficina",
+          value: naOficina.toString(),
+          icon: Wrench,
+          color: "bg-chart-3/10 text-chart-3",
+        },
+        {
+          label: "Para Revisão",
+          value: paraRevisao.toString(),
+          icon: Settings,
+          color: "bg-chart-4/10 text-chart-4",
+        },
+      ],
+      secondary: [
+        {
+          label: "Contratos a Vencer Frota",
+          value: contratosVencendoFrota.toString(),
+          icon: AlertTriangle,
+          color: "bg-destructive/10 text-destructive",
+        },
+        {
+          label: "Faturamento Mensal",
+          value: formatCurrency(billingCycleFuelTotal),
+          helperText: `Ciclo ${formatShortDate(billingCycle.start)} a ${formatShortDate(billingCycle.end)}`,
+          secondaryHelperText: lastImportedLabel ? `Última atualização: ${lastImportedLabel}` : "Última atualização: sem importação registrada",
+          icon: Fuel,
+          color: "bg-emerald-500/10 text-emerald-600",
+        },
+        {
+          label: "Multas Enviadas pela Frota",
+          value: formatCurrency(valorEnviadoFrota),
+          helperText: `${quantidadeEnviadaFrota} ${quantidadeEnviadaFrota === 1 ? "multa enviada" : "multas enviadas"}`,
+          icon: Send,
+          color: "bg-sky-500/10 text-sky-600",
+        },
+        {
+          label: "Multas Pagas pelo RH",
+          value: formatCurrency(valorPagoRh),
+          helperText: `${quantidadePagaRh} ${quantidadePagaRh === 1 ? "multa paga" : "multas pagas"}`,
+          icon: BadgeCheck,
+          color: "bg-emerald-500/10 text-emerald-600",
+        },
+      ],
+    }
+  }, [billingCycle.end, billingCycle.start, billingCycleFuelTotal, lastImportedLabel, multas, vehicles])
+
+  const renderStatCard = (stat: (typeof stats.primary)[number] | (typeof stats.secondary)[number]) => {
+    const variant = statCardVariants[stat.label] ?? statCardVariants.Colaboradores
+
+    return (
+      <Card key={stat.label} className={cn("relative overflow-hidden rounded-[1.35rem] border", variant.cardClass)}>
+        <div className={cn("absolute -right-3 -top-3 h-12 w-12 rounded-full blur-2xl", variant.glowClass)} />
+        <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(255,255,255,0.7),rgba(255,255,255,0),rgba(255,255,255,0.55))]" />
+        <CardContent className="relative flex min-h-[98px] items-start gap-3 p-4 sm:p-4.5">
+          <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-[0.95rem] border border-white/70 shadow-sm", variant.iconClass)}>
+            <stat.icon className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1 pt-0.5">
+            <p className="text-[1.7rem] font-extrabold leading-none tracking-[-0.03em] text-slate-900">{stat.value}</p>
+            <p className="mt-1.5 text-[0.9rem] font-semibold leading-tight text-slate-700">{stat.label}</p>
+            {"helperText" in stat ? (
+              <>
+                <p className="mt-1 text-[0.76rem] leading-tight text-slate-500">{stat.helperText}</p>
+                {"secondaryHelperText" in stat ? (
+                  <p className="mt-1 text-[0.76rem] leading-tight text-slate-500">{stat.secondaryHelperText}</p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-      {stats.map((stat) => {
-        const variant = statCardVariants[stat.label] ?? statCardVariants.Colaboradores
-        const isWideMetric = stat.label === "Multas Pagas pelo RH" || stat.label === "Colaboradores"
-
-        return (
-          <Card
-            key={stat.label}
-            className={cn(
-              "relative overflow-hidden rounded-[1.35rem] border",
-              variant.cardClass,
-              isWideMetric ? "sm:col-span-2 xl:col-span-2" : ""
-            )}
-          >
-            <div className={cn("absolute -right-3 -top-3 h-12 w-12 rounded-full blur-2xl", variant.glowClass)} />
-            <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(255,255,255,0.7),rgba(255,255,255,0),rgba(255,255,255,0.55))]" />
-            <CardContent className="relative flex min-h-[98px] items-start gap-3 p-4 sm:p-4.5">
-              <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-[0.95rem] border border-white/70 shadow-sm", variant.iconClass)}>
-                <stat.icon className="h-4 w-4" />
-              </div>
-              <div className="min-w-0 flex-1 pt-0.5">
-                <p className="text-[1.7rem] font-extrabold leading-none tracking-[-0.03em] text-slate-900">{stat.value}</p>
-                <p className="mt-1.5 text-[0.9rem] font-semibold leading-tight text-slate-700">{stat.label}</p>
-                {"helperText" in stat ? (
-                  <p className="mt-1 text-[0.76rem] leading-tight text-slate-500">{stat.helperText}</p>
-                ) : null}
-              </div>
-            </CardContent>
-          </Card>
-        )
-      })}
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        {stats.primary.map(renderStatCard)}
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {stats.secondary.map(renderStatCard)}
+      </div>
     </div>
   )
 }
+

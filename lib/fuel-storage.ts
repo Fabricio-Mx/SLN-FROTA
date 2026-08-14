@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { parseFuelDateTime } from "@/lib/fuel-datetime"
 
@@ -9,6 +9,7 @@ export type FuelRecord = {
   tipoCombustivel: string
   valor: number
   dateTime: string
+  postingDate?: string | null
 }
 
 export type FuelMonthArchive = {
@@ -25,6 +26,10 @@ export type FuelMonthOption = {
   source: "current" | "history"
 }
 
+export type FuelImportMetadata = {
+  lastImportedAt: string | null
+}
+
 export type FuelStorageSanitization = {
   currentRecords: FuelRecord[]
   history: FuelMonthArchive[]
@@ -35,6 +40,7 @@ export type FuelStorageSanitization = {
 const FUEL_DATA_DIR = path.join(process.cwd(), "data", "fuel")
 const FUEL_DATA_FILE = path.join(FUEL_DATA_DIR, "fuel_data.json")
 const FUEL_HISTORY_FILE = path.join(FUEL_DATA_DIR, "fuel_history.json")
+const FUEL_META_FILE = path.join(FUEL_DATA_DIR, "fuel_meta.json")
 
 function isReadonlyFilesystemError(error: unknown): boolean {
   if (!(error instanceof Error) || !("code" in error)) return false
@@ -112,6 +118,7 @@ function scoreFuelRecord(record: FuelRecord): number {
   if (record.nomeMotorista.trim()) score += 2
   if (!normalizeFuelIdentity(record.nomeMotorista).includes("veiculo sem motorista")) score += 1
   if (record.dateTime.length >= 19) score += 1
+  if (record.postingDate?.trim()) score += 1
 
   return score
 }
@@ -377,6 +384,39 @@ export async function saveLocalFuelHistory(months: FuelMonthArchive[]): Promise<
   try {
     await mkdir(FUEL_DATA_DIR, { recursive: true })
     await writeFile(FUEL_HISTORY_FILE, JSON.stringify(normalizeFuelHistory(months), null, 2), "utf-8")
+    return true
+  } catch (error) {
+    if (isReadonlyFilesystemError(error)) return false
+    throw error
+  }
+}
+
+export async function readLocalFuelMetadata(): Promise<FuelImportMetadata> {
+  try {
+    const text = await readFile(FUEL_META_FILE, "utf-8")
+    const parsed = JSON.parse(text)
+
+    return {
+      lastImportedAt: typeof parsed?.lastImportedAt === "string" ? parsed.lastImportedAt : null,
+    }
+  } catch {
+    try {
+      const fileStat = await stat(FUEL_DATA_FILE)
+      return { lastImportedAt: fileStat.mtime.toISOString() }
+    } catch {
+      return { lastImportedAt: null }
+    }
+  }
+}
+
+export async function saveLocalFuelMetadata(metadata: FuelImportMetadata): Promise<boolean> {
+  try {
+    await mkdir(FUEL_DATA_DIR, { recursive: true })
+    await writeFile(
+      FUEL_META_FILE,
+      JSON.stringify({ lastImportedAt: metadata.lastImportedAt ?? null }, null, 2),
+      "utf-8"
+    )
     return true
   } catch (error) {
     if (isReadonlyFilesystemError(error)) return false

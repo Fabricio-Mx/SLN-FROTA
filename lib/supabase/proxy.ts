@@ -5,6 +5,19 @@ import { SESSION_ACTIVITY_COOKIE, SESSION_IDLE_MS, USER_SESSION_COOKIE } from '@
 
 const MASTER_DB_EMAIL = process.env.MASTER_DB_EMAIL || 'admin@sln.com'
 
+function getSupabaseAuthCookieNames(request: NextRequest) {
+  return request.cookies
+    .getAll()
+    .map(({ name }) => name)
+    .filter((name) => name.startsWith('sb-') && name.includes('-auth-token'))
+}
+
+function clearSupabaseAuthCookies(response: NextResponse, cookieNames: string[]) {
+  cookieNames.forEach((name) => {
+    response.cookies.set(name, '', { path: '/', maxAge: 0 })
+  })
+}
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
@@ -29,6 +42,9 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
+  const supabaseAuthCookieNames = getSupabaseAuthCookieNames(request)
+  const hasSupabaseAuthCookies = supabaseAuthCookieNames.length > 0
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -52,9 +68,28 @@ export async function updateSession(request: NextRequest) {
     },
   )
 
-  let {
-    data: { user },
-  } = await supabase.auth.getUser()
+  let user = null
+
+  if (hasSupabaseAuthCookies) {
+    try {
+      const {
+        data: { user: sessionUser },
+      } = await supabase.auth.getUser()
+
+      user = sessionUser
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'refresh_token_not_found'
+      ) {
+        clearSupabaseAuthCookies(supabaseResponse, supabaseAuthCookieNames)
+      } else {
+        throw error
+      }
+    }
+  }
 
   if (!user && hasMasterCookie) {
     const { data, error } = await supabase.auth.signInWithPassword({

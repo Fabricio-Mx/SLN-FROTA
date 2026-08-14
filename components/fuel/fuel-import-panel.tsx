@@ -3,6 +3,7 @@
 import { useRef, useState } from "react"
 import { useSWRConfig } from "swr"
 import { Trash2, Upload } from "lucide-react"
+import Link from "next/link"
 import { FUEL_COST_CENTER_SWR_KEY } from "@/hooks/use-fuel-cost-centers"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -21,10 +22,23 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
-type FuelImportMode = "weekly" | "monthly"
+type FuelImportMode = "weekly" | "monthly" | "billing"
 
 type FuelImportPanelProps = {
   isMaster?: boolean
+}
+
+function formatDriveErrorMessage(data: unknown, fallback: string) {
+  if (!data || typeof data !== "object") {
+    return fallback
+  }
+
+  const payload = data as { error?: string; driveError?: string | null }
+  if (payload.driveError) {
+    return `${payload.error || fallback} Detalhe do Drive: ${payload.driveError}`
+  }
+
+  return payload.error || fallback
 }
 
 export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
@@ -49,6 +63,12 @@ export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
       const body = new FormData()
       body.append("file", file)
       body.append("importMode", importMode)
+      if (importMode === "monthly") {
+        const targetMonth = selectedMonth ?? currentMonth
+        if (targetMonth) {
+          body.append("targetMonth", targetMonth)
+        }
+      }
 
       const res = await fetch("/api/fuel/import", {
         method: "POST",
@@ -57,19 +77,24 @@ export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        throw new Error(data?.error || "Falha ao enviar planilha.")
+        throw new Error(formatDriveErrorMessage(data, "Falha ao enviar planilha."))
       }
 
       toast({
         title: "Importação concluída",
         description:
+          data?.replacedMonths?.length > 0
+            ? `Fatura atualizada com ${data?.imported ?? 0} registros. Competências substituídas: ${data.replacedMonths.join(", ")}.`
+            :
           data?.replacedMonth
             ? `Competência ${data.replacedMonth} substituída com ${data?.imported ?? 0} registros do relatório mensal.`
             : data?.archivedMonths?.length > 0
             ? `Registros importados: ${data?.imported ?? 0}. Meses arquivados: ${data.archivedMonths.join(", ")}.`
             : `Registros importados: ${data?.imported ?? 0}`,
       })
-      if (data?.replacedMonth) {
+      if (data?.replacedMonths?.length > 0) {
+        setSelectedMonth(data.replacedMonths[0])
+      } else if (data?.replacedMonth) {
         setSelectedMonth(data.replacedMonth)
       } else if (currentMonth) {
         setSelectedMonth(currentMonth)
@@ -103,7 +128,7 @@ export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        throw new Error(data?.error || "Falha ao enviar a planilha de centro de custo.")
+        throw new Error(formatDriveErrorMessage(data, "Falha ao enviar a planilha de centro de custo."))
       }
 
       toast({
@@ -135,7 +160,7 @@ export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        throw new Error(data?.error || "Falha ao excluir a competência.")
+        throw new Error(formatDriveErrorMessage(data, "Falha ao excluir a competência."))
       }
 
       toast({
@@ -169,9 +194,20 @@ export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
       <CardContent className="flex flex-col gap-4 p-5">
         <div className="text-sm text-slate-500">
           {isMaster
-            ? "Escolha se o arquivo é semanal ou mensal. O semanal mescla novos registros; o mensal substitui a competência inteira do arquivo."
+            ? "Escolha se o arquivo é semanal, mensal ou de fatura. O semanal mescla registros; o mensal substitui um único mês; a fatura substitui todos os meses que vierem no arquivo."
             : "Somente o usuário mestre pode importar relatórios."}
         </div>
+
+        {isMaster ? (
+          <div className="flex flex-col gap-2 rounded-xl border border-[#d8dfd1] bg-white/80 p-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Se o Drive pedir autorização para gravar, conecte a conta Google do Drive uma vez antes de importar.
+            </span>
+            <Button asChild type="button" variant="outline" className="border-[#cfd8c7] bg-white">
+              <Link href="/api/drive/oauth/start">Autorizar Drive</Link>
+            </Button>
+          </div>
+        ) : null}
 
         {isMaster ? (
           <div className="grid gap-3 rounded-xl border border-[#eadfb9] bg-[#fff9e8] p-3 md:grid-cols-[220px_1fr] md:items-start">
@@ -186,17 +222,20 @@ export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
                 <SelectContent>
                   <SelectItem value="weekly">Semanal</SelectItem>
                   <SelectItem value="monthly">Mensal</SelectItem>
+                  <SelectItem value="billing">Fatura</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div className="space-y-1 pt-0.5">
               <p className="text-sm font-semibold text-slate-900">
-                {importMode === "monthly" ? "Relatório mensal" : "Relatório semanal"}
+                {importMode === "monthly" ? "Relatório mensal" : importMode === "billing" ? "Relatório de fatura" : "Relatório semanal"}
               </p>
               <p className="text-xs text-slate-600">
                 {importMode === "monthly"
-                  ? "Use quando o arquivo trouxer a competência inteira. O sistema substitui todo o mês do arquivo pelos dados novos."
+                  ? "Use quando o arquivo trouxer a competência inteira. A competência selecionada no painel será substituída pelos dados novos."
+                  : importMode === "billing"
+                  ? "Use para uma carga grande de fechamento. O sistema aceita várias competências no mesmo CSV e substitui todos os meses encontrados no arquivo."
                   : "Use para cargas parciais da semana. O sistema mescla os registros novos ao mês já existente."}
               </p>
             </div>
@@ -206,7 +245,9 @@ export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-xs text-slate-500">
             {importMode === "monthly"
-              ? "Modo mensal: a competência do arquivo será substituída por completo."
+              ? "Modo mensal: a competência selecionada será substituída por completo, mesmo com datas cruzadas no fechamento."
+              : importMode === "billing"
+              ? "Modo fatura: todas as competências encontradas no arquivo serão substituídas de uma só vez."
               : "Modo semanal: os registros novos serão mesclados ao que já existe."}
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">

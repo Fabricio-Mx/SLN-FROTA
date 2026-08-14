@@ -29,7 +29,7 @@ export function ColaboradoresFilters({ filters, onFiltersChange }: Colaboradores
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Buscar por nome, CPF ou telefone..."
+            placeholder="Buscar por nome, CPF, telefone ou centro de custo..."
             value={filters.search}
             onChange={(e) =>
               onFiltersChange({ ...filters, search: e.target.value })

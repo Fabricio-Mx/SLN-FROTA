@@ -51,6 +51,7 @@ export function IdleLogout({ idleMs = DEFAULT_IDLE_MS }: IdleLogoutProps) {
     const handleIdle = async () => {
       if (loggingOutRef.current) return
       loggingOutRef.current = true
+      localStorage.removeItem(LAST_ACTIVITY_STORAGE_KEY)
       try {
         await logoutAction()
       } catch {
@@ -99,8 +100,9 @@ export function IdleLogout({ idleMs = DEFAULT_IDLE_MS }: IdleLogoutProps) {
       }
     }
 
-    syncActivity(true)
-    resetTimer()
+    localStorage.setItem(LAST_ACTIVITY_STORAGE_KEY, String(Date.now()))
+    clearTimer()
+    timeoutRef.current = setTimeout(handleIdle, idleMs)
 
     return () => {
       clearTimer()

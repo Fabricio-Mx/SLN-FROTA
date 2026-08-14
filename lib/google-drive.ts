@@ -3,6 +3,13 @@ import { google } from "googleapis"
 import { createAdminClient } from "@/lib/supabase/admin"
 
 const DRIVE_SCOPE = ["https://www.googleapis.com/auth/drive"]
+const DRIVE_LIST_OPTIONS = {
+  supportsAllDrives: true,
+  includeItemsFromAllDrives: true,
+} as const
+const DRIVE_WRITE_OPTIONS = {
+  supportsAllDrives: true,
+} as const
 
 const GOOGLE_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
 const GOOGLE_DRIVE_CLIENT_EMAIL = process.env.GOOGLE_DRIVE_CLIENT_EMAIL
@@ -21,6 +28,41 @@ function normalizePrivateKey(value?: string) {
   return normalizeEnvValue(value)?.replace(/\\n/g, "\n")
 }
 
+export function describeDriveError(error: unknown) {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  if (typeof error === "object" && error !== null) {
+    const candidate = error as {
+      code?: number
+      message?: string
+      errors?: Array<{ message?: string }>
+      response?: { data?: { error?: { message?: string } } }
+    }
+
+    const apiMessage = candidate.response?.data?.error?.message
+    if (typeof apiMessage === "string" && apiMessage) {
+      return apiMessage
+    }
+
+    const nestedMessage = candidate.errors?.find((item) => typeof item?.message === "string")?.message
+    if (nestedMessage) {
+      return nestedMessage
+    }
+
+    if (typeof candidate.message === "string" && candidate.message) {
+      return candidate.message
+    }
+
+    if (typeof candidate.code === "number") {
+      return `Erro do Google Drive (${candidate.code}).`
+    }
+  }
+
+  return "Falha ao acessar o Google Drive."
+}
+
 export function isDriveConfigured() {
   const hasFolderId = Boolean(normalizeEnvValue(GOOGLE_DRIVE_FOLDER_ID))
   const hasServiceAccount = Boolean(normalizeEnvValue(GOOGLE_DRIVE_CLIENT_EMAIL) && normalizePrivateKey(GOOGLE_DRIVE_PRIVATE_KEY))
@@ -34,14 +76,18 @@ export function isDriveConfigured() {
 }
 
 function getOAuthClient() {
-  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !GOOGLE_OAUTH_REDIRECT_URL) {
+  const clientId = normalizeEnvValue(GOOGLE_OAUTH_CLIENT_ID)
+  const clientSecret = normalizeEnvValue(GOOGLE_OAUTH_CLIENT_SECRET)
+  const redirectUrl = normalizeEnvValue(GOOGLE_OAUTH_REDIRECT_URL)
+
+  if (!clientId || !clientSecret || !redirectUrl) {
     throw new Error("Google OAuth nao configurado.")
   }
 
   return new google.auth.OAuth2(
-    GOOGLE_OAUTH_CLIENT_ID,
-    GOOGLE_OAUTH_CLIENT_SECRET,
-    GOOGLE_OAUTH_REDIRECT_URL
+    clientId,
+    clientSecret,
+    redirectUrl
   )
 }
 
@@ -61,15 +107,28 @@ async function getStoredRefreshToken() {
 }
 
 export function getDriveRootFolderId() {
-  if (!GOOGLE_DRIVE_FOLDER_ID) {
+  const folderId = normalizeEnvValue(GOOGLE_DRIVE_FOLDER_ID)
+
+  if (!folderId) {
     throw new Error("Drive folder id nao configurado.")
   }
 
-  return GOOGLE_DRIVE_FOLDER_ID
+  return folderId
 }
 
 export async function getDriveClients() {
   const clients: GoogleDriveClient[] = []
+
+  try {
+    const refreshToken = await getStoredRefreshToken()
+    if (refreshToken) {
+      const auth = getOAuthClient()
+      auth.setCredentials({ refresh_token: refreshToken })
+      clients.push(google.drive({ version: "v3", auth }))
+    }
+  } catch {
+    // OAuth e apenas fallback aqui.
+  }
 
   const serviceAccountEmail = normalizeEnvValue(GOOGLE_DRIVE_CLIENT_EMAIL)
   const serviceAccountKey = normalizePrivateKey(GOOGLE_DRIVE_PRIVATE_KEY)
@@ -81,17 +140,6 @@ export async function getDriveClients() {
     })
 
     clients.push(google.drive({ version: "v3", auth: serviceAuth }))
-  }
-
-  try {
-    const refreshToken = await getStoredRefreshToken()
-    if (refreshToken) {
-      const auth = getOAuthClient()
-      auth.setCredentials({ refresh_token: refreshToken })
-      clients.push(google.drive({ version: "v3", auth }))
-    }
-  } catch {
-    // OAuth e apenas fallback aqui.
   }
 
   if (clients.length === 0) {
@@ -109,7 +157,11 @@ export async function ensureFolder(drive: GoogleDriveClient, name: string, paren
     "trashed=false",
   ].join(" and ")
 
-  const list = await drive.files.list({ q, fields: "files(id, name)" })
+  const list = await drive.files.list({
+    q,
+    fields: "files(id, name)",
+    ...DRIVE_LIST_OPTIONS,
+  })
 
   if (list.data.files?.length) {
     return list.data.files[0].id as string
@@ -122,9 +174,45 @@ export async function ensureFolder(drive: GoogleDriveClient, name: string, paren
       parents: [parentId],
     },
     fields: "id",
+    ...DRIVE_WRITE_OPTIONS,
   })
 
   return created.data.id as string
+}
+
+export async function findFolder(drive: GoogleDriveClient, name: string, parentId: string) {
+  const q = [
+    "mimeType='application/vnd.google-apps.folder'",
+    `name='${name.replace(/'/g, "\\'")}'`,
+    `'${parentId}' in parents`,
+    "trashed=false",
+  ].join(" and ")
+
+  const list = await drive.files.list({
+    q,
+    fields: "files(id, name)",
+    ...DRIVE_LIST_OPTIONS,
+  })
+
+  return list.data.files?.[0] || null
+}
+
+export async function findLatestFileInFolder(drive: GoogleDriveClient, parentId: string) {
+  const q = [
+    `'${parentId}' in parents`,
+    "mimeType!='application/vnd.google-apps.folder'",
+    "trashed=false",
+  ].join(" and ")
+
+  const list = await drive.files.list({
+    q,
+    fields: "files(id, name, mimeType, modifiedTime)",
+    orderBy: "modifiedTime desc",
+    pageSize: 1,
+    ...DRIVE_LIST_OPTIONS,
+  })
+
+  return list.data.files?.[0] || null
 }
 
 export async function findFile(drive: GoogleDriveClient, name: string, parentId: string) {
@@ -134,17 +222,16 @@ export async function findFile(drive: GoogleDriveClient, name: string, parentId:
     "trashed=false",
   ].join(" and ")
 
-  const list = await drive.files.list({ q, fields: "files(id, name)" })
+  const list = await drive.files.list({
+    q,
+    fields: "files(id, name, modifiedTime)",
+    ...DRIVE_LIST_OPTIONS,
+  })
   return list.data.files?.[0] || null
 }
 
 export async function readJsonFile<T>(drive: GoogleDriveClient, fileId: string): Promise<T | null> {
-  const response = await drive.files.get(
-    { fileId, alt: "media" },
-    { responseType: "arraybuffer" }
-  )
-
-  const buffer = Buffer.from(response.data as ArrayBuffer)
+  const buffer = await readDriveFileContent(drive, fileId)
   const text = buffer.toString("utf-8")
   if (!text) return null
 
@@ -155,18 +242,38 @@ export async function readJsonFile<T>(drive: GoogleDriveClient, fileId: string):
   }
 }
 
+export async function readDriveFileContent(drive: GoogleDriveClient, fileId: string): Promise<Buffer> {
+  const response = await drive.files.get(
+    { fileId, alt: "media", supportsAllDrives: true },
+    { responseType: "arraybuffer" }
+  )
+
+  return Buffer.from(response.data as ArrayBuffer)
+}
+
 export async function upsertJsonFile(drive: GoogleDriveClient, parentId: string, fileName: string, payload: unknown) {
   const content = Buffer.from(JSON.stringify(payload, null, 2))
+  return upsertBinaryFile(drive, parentId, fileName, content, "application/json")
+}
+
+export async function upsertBinaryFile(
+  drive: GoogleDriveClient,
+  parentId: string,
+  fileName: string,
+  content: Buffer,
+  mimeType: string,
+) {
   const existing = await findFile(drive, fileName, parentId)
 
   if (existing?.id) {
     return drive.files.update({
       fileId: existing.id,
       media: {
-        mimeType: "application/json",
+        mimeType,
         body: Readable.from(content),
       },
       fields: "id, name",
+      ...DRIVE_WRITE_OPTIONS,
     })
   }
 
@@ -176,9 +283,10 @@ export async function upsertJsonFile(drive: GoogleDriveClient, parentId: string,
       parents: [parentId],
     },
     media: {
-      mimeType: "application/json",
+      mimeType,
       body: Readable.from(content),
     },
     fields: "id, name",
+    ...DRIVE_WRITE_OPTIONS,
   })
 }

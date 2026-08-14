@@ -9,7 +9,7 @@ create table if not exists public.fleet_colaboradores (
   departamento text not null,
   cep text,
   endereco text,
-  data_vencimento_cnh date not null,
+  data_vencimento_cnh date,
   documentos jsonb,
   imagens_veiculo jsonb,
   checklist jsonb,

@@ -117,10 +117,28 @@
 }
 
 @layer base {
+  html {
+    font-size: 16px;
+  }
+
+  @media (min-width: 1024px) and (max-width: 1440px) {
+    html {
+      font-size: 15px;
+    }
+  }
+
+  @media (min-width: 1024px) and (max-height: 820px) {
+    html {
+      font-size: 14px;
+    }
+  }
+
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
+    min-height: 100svh;
   }
 }

@@ -23,6 +23,7 @@ type ColaboradorRow = {
   telefone: string
   email: string | null
   departamento: string
+  centro_custo: string | null
   cep: string | null
   endereco: string | null
   data_vencimento_cnh: string | null
@@ -33,7 +34,7 @@ type ColaboradorRow = {
   updated_at: string
 }
 
-const COLABORADOR_MIGRATION_COLUMNS = ["email", "cep", "endereco", "imagens_veiculo"]
+const COLABORADOR_MIGRATION_COLUMNS = ["email", "centro_custo", "cep", "endereco", "imagens_veiculo"]
 
 const getColaboradorSchemaErrorMessage = (message?: string) => {
   if (!message) return null
@@ -51,6 +52,7 @@ const mapColaboradorRow = (row: ColaboradorRow): Colaborador => {
     telefone: row.telefone,
     email: row.email || "",
     departamento: row.departamento,
+    centroCusto: row.centro_custo || "",
     cep: row.cep || "",
     endereco: row.endereco || "",
     dataVencimentoCNH: row.data_vencimento_cnh || "",
@@ -68,6 +70,7 @@ const toColaboradorRow = (formData: ColaboradorFormData): Omit<ColaboradorRow, "
     telefone: formData.telefone,
     email: formData.email,
     departamento: formData.departamento,
+    centro_custo: formData.centroCusto,
     cep: formData.cep,
     endereco: formData.endereco,
     data_vencimento_cnh: formData.dataVencimentoCNH,
@@ -101,11 +104,12 @@ const fetcher = async (): Promise<Colaborador[]> => {
   return (data || []).map((row) => mapColaboradorRow(row as ColaboradorRow))
 }
 
-export function useColaboradores() {
-  const { data, error, isLoading } = useSWR<Colaborador[]>(SWR_KEY, fetcher, SWR_OPTIONS)
+export function useColaboradores(enabled = true) {
+  const { data, error, isLoading } = useSWR<Colaborador[]>(enabled ? SWR_KEY : null, fetcher, SWR_OPTIONS)
   const colaboradores = data ?? []
 
   useEffect(() => {
+    if (!enabled) return
     if (typeof window === "undefined") return
     if (isLoading) return
     if (localStorage.getItem(MIGRATION_KEY) === "1") return
@@ -130,7 +134,7 @@ export function useColaboradores() {
     }
 
     migrate()
-  }, [isLoading, colaboradores.length])
+  }, [colaboradores.length, enabled, isLoading])
 
   const addColaborador = async (formData: ColaboradorFormData): Promise<Colaborador> => {
     const supabase = createClient()
@@ -195,4 +199,8 @@ export function useColaboradores() {
     deleteColaborador,
     getColaboradorById,
   }
+}
+
+export function refreshColaboradores() {
+  return mutate(SWR_KEY)
 }

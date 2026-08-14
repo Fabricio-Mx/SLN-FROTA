@@ -60,6 +60,7 @@ export function ColaboradoresTable({
             <TableHead className="text-[0.88rem] font-semibold">CPF</TableHead>
             <TableHead className="text-[0.88rem] font-semibold">Telefone</TableHead>
             <TableHead className="text-[0.88rem] font-semibold">Departamento</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold">Centro de Custo</TableHead>
             <TableHead className="text-[0.88rem] font-semibold">Vencimento CNH</TableHead>
             <TableHead className="text-[0.88rem] font-semibold">Veículo</TableHead>
             <TableHead className="text-[0.88rem] font-semibold">KM</TableHead>
@@ -83,24 +84,27 @@ export function ColaboradoresTable({
                   {colaborador.cpf}
                 </TableCell>
                 <TableCell>
-                  <div className="space-y-1 text-[0.92rem]">
-                    <p>{colaborador.telefone}</p>
-                    {colaborador.cep ? <p className="text-xs text-muted-foreground">CEP: {colaborador.cep}</p> : null}
-                  </div>
+                  <p className="text-[0.92rem]">{colaborador.telefone || "-"}</p>
                 </TableCell>
                 <TableCell>
-                  <div className="space-y-1">
-                    <Badge variant="secondary">{colaborador.departamento}</Badge>
-                    {colaborador.endereco ? (
-                      <p className="max-w-[240px] truncate text-xs text-muted-foreground" title={colaborador.endereco}>
-                        {colaborador.endereco}
-                      </p>
-                    ) : null}
-                  </div>
+                  <Badge variant="secondary">{colaborador.departamento || "-"}</Badge>
+                </TableCell>
+                <TableCell>
+                  <span className="text-[0.92rem] text-muted-foreground">
+                    {colaborador.centroCusto || "-"}
+                  </span>
                 </TableCell>
                 <TableCell>
                   {(() => {
+                    if (!colaborador.dataVencimentoCNH) {
+                      return <span className="text-[0.92rem] text-muted-foreground">-</span>
+                    }
+
                     const vencimento = new Date(colaborador.dataVencimentoCNH)
+                    if (Number.isNaN(vencimento.getTime())) {
+                      return <span className="text-[0.92rem] text-muted-foreground">-</span>
+                    }
+
                     const hoje = new Date()
                     const trintaDias = new Date(hoje.getTime() + 30 * 24 * 60 * 60 * 1000)
                     const vencido = vencimento < hoje

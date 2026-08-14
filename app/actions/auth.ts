@@ -116,7 +116,7 @@ export async function loginAction(email: string, password: string): Promise<{ su
       email: data.user.email || email,
       nome: profile?.nome || data.user.user_metadata?.nome || email,
       role: profile?.role || data.user.user_metadata?.role || "consulta",
-      avatarUrl: data.user.user_metadata?.avatar_url || null,
+      avatarUrl: profile?.avatar_url || data.user.user_metadata?.avatar_url || null,
       isMaster: false,
     }
 

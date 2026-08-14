@@ -28,10 +28,7 @@ import { getNextReviewKm } from "@/lib/fleet-maintenance"
 import type { Vehicle, VehicleFormData } from "@/lib/types"
 
 const FORNECEDORES_PROPRIO = [
-  { value: "bradesco_financiamento", label: "Bradesco Financiamento" },
-  { value: "banco_pan", label: "BANCO PAN S.A." },
-  { value: "banco_volkswagen", label: "BANCO VOLKSWAGEN S.A." },
-  { value: "sisprime_cdc", label: "Sisprime do Brasil - CDC" },
+  { value: "veiculo_sln", label: "Veículo SLN" },
 ] as const
 
 interface VehicleModalProps {
@@ -52,7 +49,7 @@ const initialFormData: VehicleFormData = {
   dataVencimentoContrato: "",
   tipoPropriedade: "proprio",
   empresaLocacao: null,
-  fornecedorProprio: null,
+  fornecedorProprio: "veiculo_sln",
   cartaoCombustivel: "veloe",
   numeroCartaoCombustivel: null,
   placaCartaoCombustivel: null,
@@ -85,11 +82,18 @@ export function VehicleModal({
         modelo: vehicle.modelo || "",
         km: vehicle.km ?? 0,
         kmUltimaRevisao: vehicle.kmUltimaRevisao ?? null,
-        mensalidade: vehicle.mensalidade ?? 0,
-        dataVencimentoContrato: vehicle.dataVencimentoContrato || "",
+        mensalidade: vehicle.tipoPropriedade === "proprio" ? 0 : vehicle.mensalidade ?? 0,
+        dataVencimentoContrato: vehicle.tipoPropriedade === "proprio" ? "" : vehicle.dataVencimentoContrato || "",
         tipoPropriedade: vehicle.tipoPropriedade || "proprio",
-        empresaLocacao: vehicle.empresaLocacao || null,
-        fornecedorProprio: vehicle.fornecedorProprio || null,
+        empresaLocacao:
+          vehicle.tipoPropriedade === "alugado"
+            ? vehicle.empresaLocacao === "movida"
+              ? "4loc"
+              : vehicle.empresaLocacao === "veiculo_sln"
+                ? null
+                : vehicle.empresaLocacao || null
+            : vehicle.empresaLocacao || null,
+        fornecedorProprio: vehicle.tipoPropriedade === "proprio" ? "veiculo_sln" : vehicle.fornecedorProprio || null,
         cartaoCombustivel: vehicle.cartaoCombustivel || "veloe",
         numeroCartaoCombustivel: vehicle.numeroCartaoCombustivel || null,
         placaCartaoCombustivel: vehicle.placaCartaoCombustivel || null,
@@ -199,7 +203,7 @@ export function VehicleModal({
       newErrors.mensalidade = "Mensalidade não pode ser negativa"
     }
 
-    if (!formData.dataVencimentoContrato) {
+    if (formData.tipoPropriedade === "alugado" && !formData.dataVencimentoContrato) {
       newErrors.dataVencimentoContrato = "Data de vencimento é obrigatória"
     }
 
@@ -222,6 +226,13 @@ export function VehicleModal({
         ...formData,
         placa: formData.placa.toUpperCase(),
         chassi: formData.chassi.toUpperCase(),
+        mensalidade: formData.tipoPropriedade === "proprio" ? 0 : formData.mensalidade,
+        dataVencimentoContrato: formData.tipoPropriedade === "proprio" ? "" : formData.dataVencimentoContrato,
+        empresaLocacao:
+          formData.tipoPropriedade === "alugado" && formData.empresaLocacao === "veiculo_sln"
+            ? null
+            : formData.empresaLocacao,
+        fornecedorProprio: formData.tipoPropriedade === "proprio" ? "veiculo_sln" : formData.fornecedorProprio,
       })
       onOpenChange(false)
     }
@@ -242,6 +253,106 @@ export function VehicleModal({
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="tipoPropriedade">Tipo de Propriedade</Label>
+              <Select
+                value={formData.tipoPropriedade}
+                onValueChange={(value) =>
+                  setFormData({
+                    ...formData,
+                    tipoPropriedade: value as "alugado" | "proprio",
+                    empresaLocacao: value === "proprio" ? null : formData.empresaLocacao,
+                    mensalidade: value === "proprio" ? 0 : formData.mensalidade,
+                    dataVencimentoContrato: value === "proprio" ? "" : formData.dataVencimentoContrato,
+                    fornecedorProprio:
+                      value === "alugado"
+                        ? null
+                        : formData.fornecedorProprio || "veiculo_sln",
+                  })
+                }
+              >
+                <SelectTrigger id="tipoPropriedade">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="proprio">Próprio</SelectItem>
+                  <SelectItem value="alugado">Alugado</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {formData.tipoPropriedade === "alugado" && (
+              <div className="grid gap-2">
+                <Label htmlFor="empresaLocacao">Empresa de Locação</Label>
+                <Select
+                  value={formData.empresaLocacao || ""}
+                  onValueChange={(value) =>
+                    setFormData({
+                      ...formData,
+                      empresaLocacao: value as "localiza" | "lok_motors" | "4loc",
+                    })
+                  }
+                >
+                  <SelectTrigger id="empresaLocacao">
+                    <SelectValue placeholder="Selecione a empresa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="localiza">Localiza</SelectItem>
+                    <SelectItem value="lok_motors">LOK MOTORS</SelectItem>
+                    <SelectItem value="4loc">4LOC</SelectItem>
+                  </SelectContent>
+                </Select>
+                {errors.empresaLocacao && (
+                  <p className="text-sm text-destructive">{errors.empresaLocacao}</p>
+                )}
+              </div>
+            )}
+            {formData.tipoPropriedade === "proprio" && (
+              <div className="grid gap-2">
+                <Label htmlFor="fornecedorProprio">Fornecedor do Veículo</Label>
+                <Select
+                  value={formData.fornecedorProprio || ""}
+                  onValueChange={(value) =>
+                    setFormData({
+                      ...formData,
+                      fornecedorProprio: value,
+                    })
+                  }
+                >
+                  <SelectTrigger id="fornecedorProprio">
+                    <SelectValue placeholder="Selecione o fornecedor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FORNECEDORES_PROPRIO.map((fornecedor) => (
+                      <SelectItem key={fornecedor.value} value={fornecedor.value}>
+                        {fornecedor.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.fornecedorProprio && (
+                  <p className="text-sm text-destructive">{errors.fornecedorProprio}</p>
+                )}
+              </div>
+            )}
+            {formData.tipoPropriedade === "alugado" && (
+              <div className="grid gap-2">
+                <Label htmlFor="mensalidade">Valor da Mensalidade (R$)</Label>
+                <Input
+                  id="mensalidade"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0,00"
+                  value={formData.mensalidade || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, mensalidade: parseFloat(e.target.value) || 0 })
+                  }
+                />
+                {errors.mensalidade && (
+                  <p className="text-sm text-destructive">{errors.mensalidade}</p>
+                )}
+              </div>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="placa">Placa</Label>
               <Input
@@ -344,39 +455,24 @@ export function VehicleModal({
                   : "Informe o KM da última revisão para calcular automaticamente a próxima em 10.000 km."}
               </p>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="mensalidade">Valor da Mensalidade (R$)</Label>
-              <Input
-                id="mensalidade"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="0,00"
-                value={formData.mensalidade || ""}
-                onChange={(e) =>
-                  setFormData({ ...formData, mensalidade: parseFloat(e.target.value) || 0 })
-                }
-              />
-              {errors.mensalidade && (
-                <p className="text-sm text-destructive">{errors.mensalidade}</p>
-              )}
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="dataVencimento">Data de Vencimento do Contrato</Label>
-              <Input
-                id="dataVencimento"
-                type="date"
-                value={formData.dataVencimentoContrato}
-                onChange={(e) =>
-                  setFormData({ ...formData, dataVencimentoContrato: e.target.value })
-                }
-              />
-              {errors.dataVencimentoContrato && (
-                <p className="text-sm text-destructive">
-                  {errors.dataVencimentoContrato}
-                </p>
-              )}
-            </div>
+            {formData.tipoPropriedade === "alugado" && (
+              <div className="grid gap-2">
+                <Label htmlFor="dataVencimento">Data de Vencimento do Contrato</Label>
+                <Input
+                  id="dataVencimento"
+                  type="date"
+                  value={formData.dataVencimentoContrato}
+                  onChange={(e) =>
+                    setFormData({ ...formData, dataVencimentoContrato: e.target.value })
+                  }
+                />
+                {errors.dataVencimentoContrato && (
+                  <p className="text-sm text-destructive">
+                    {errors.dataVencimentoContrato}
+                  </p>
+                )}
+              </div>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="imagens">Imagens do Veículo</Label>
               <Input
@@ -418,83 +514,6 @@ export function VehicleModal({
                 O checklist do veículo é realizado diretamente na Vexsoft.
               </p>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="tipoPropriedade">Tipo de Propriedade</Label>
-              <Select
-                value={formData.tipoPropriedade}
-                onValueChange={(value) =>
-                  setFormData({
-                    ...formData,
-                    tipoPropriedade: value as "alugado" | "proprio",
-                    empresaLocacao: value === "proprio" ? null : formData.empresaLocacao,
-                    fornecedorProprio: value === "alugado" ? null : formData.fornecedorProprio,
-                  })
-                }
-              >
-                <SelectTrigger id="tipoPropriedade">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="proprio">Próprio</SelectItem>
-                  <SelectItem value="alugado">Alugado</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {formData.tipoPropriedade === "alugado" && (
-              <div className="grid gap-2">
-                <Label htmlFor="empresaLocacao">Empresa de Locação</Label>
-                <Select
-                  value={formData.empresaLocacao || ""}
-                  onValueChange={(value) =>
-                    setFormData({
-                      ...formData,
-                      empresaLocacao: value as "localiza" | "lok_motors" | "movida" | "veiculo_sln",
-                    })
-                  }
-                >
-                  <SelectTrigger id="empresaLocacao">
-                    <SelectValue placeholder="Selecione a empresa" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="localiza">Localiza</SelectItem>
-                    <SelectItem value="lok_motors">LOK MOTORS</SelectItem>
-                    <SelectItem value="movida">Movida</SelectItem>
-                    <SelectItem value="veiculo_sln">Veículo SLN</SelectItem>
-                  </SelectContent>
-                </Select>
-                {errors.empresaLocacao && (
-                  <p className="text-sm text-destructive">{errors.empresaLocacao}</p>
-                )}
-              </div>
-            )}
-            {formData.tipoPropriedade === "proprio" && (
-              <div className="grid gap-2">
-                <Label htmlFor="fornecedorProprio">Fornecedor do Veículo</Label>
-                <Select
-                  value={formData.fornecedorProprio || ""}
-                  onValueChange={(value) =>
-                    setFormData({
-                      ...formData,
-                      fornecedorProprio: value,
-                    })
-                  }
-                >
-                  <SelectTrigger id="fornecedorProprio">
-                    <SelectValue placeholder="Selecione o fornecedor" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {FORNECEDORES_PROPRIO.map((fornecedor) => (
-                      <SelectItem key={fornecedor.value} value={fornecedor.value}>
-                        {fornecedor.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.fornecedorProprio && (
-                  <p className="text-sm text-destructive">{errors.fornecedorProprio}</p>
-                )}
-              </div>
-            )}
             <div className="grid gap-2">
               <Label htmlFor="cartaoCombustivel">Cartão Combustível</Label>
               <Select
@@ -597,6 +616,9 @@ export function VehicleModal({
                   </Label>
                 </div>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Se desmarcar &quot;Frota&quot;, o veículo continua visível em &quot;Veículos Frota&quot; como disponível, mas sai da contagem da frota e não vai para agregados.
+              </p>
             </div>
           </div>
           <DialogFooter>

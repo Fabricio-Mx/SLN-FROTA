@@ -68,7 +68,7 @@ export const MULTA_GRAVIDADE_OPTIONS = Object.entries(MULTA_GRAVIDADE_LABELS).ma
 
 export const MULTA_LOCADORA_OPTIONS = [
   { value: "Localiza", label: "Localiza" },
-  { value: "Movida", label: "Movida" },
+  { value: "4LOC", label: "4LOC" },
   { value: "Lok Motors", label: "Lok Motors" },
   { value: "Próprio", label: "Próprio" },
 ] as const
@@ -200,7 +200,7 @@ export const MULTAS_DEMO_SEED: Multa[] = [
     rhPagoEm: "2026-03-10T16:45:00.000Z",
     valorNic: 293.47,
     valorTotalDesconto: 293.47,
-    locadora: "Movida",
+    locadora: "4LOC",
     observacoes: "Pagamento já processado pela locadora.",
     createdAt: "2026-03-06T14:15:00.000Z",
     updatedAt: "2026-03-06T14:15:00.000Z",
@@ -249,7 +249,7 @@ export function normalizeMultaLocadora(value: string | null | undefined): string
   const normalized = value.trim().toLowerCase()
 
   if (["localiza"].includes(normalized)) return "Localiza"
-  if (["movida"].includes(normalized)) return "Movida"
+  if (["movida", "4loc"].includes(normalized)) return "4LOC"
   if (["lok_motors", "lok motors", "lokmotors", "lok-motors"].includes(normalized)) return "Lok Motors"
   if (["proprio", "próprio", "veiculo_sln", "veículo sln"].includes(normalized)) return "Próprio"
 

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { createAdminClient } from "@/lib/supabase/admin"
+import { deleteLocalAvatar, saveLocalAvatar } from "@/lib/avatar-storage"
 import { verifySession } from "@/lib/auth"
-import { ensureFolder, getDriveClients, getDriveRootFolderId } from "@/lib/google-drive"
+import { describeDriveError, ensureFolder, getDriveClients, getDriveRootFolderId } from "@/lib/google-drive"
 import path from "node:path"
 import { Readable } from "node:stream"
 
@@ -44,43 +45,73 @@ export async function POST(request: Request) {
     }
 
     const supabase = createAdminClient()
-    const drive = (await getDriveClients())[0]
     const fileBuffer = Buffer.from(await file.arrayBuffer())
     const avatarUrl = `/api/auth/users/${userId}/avatar`
-    const rootId = getDriveRootFolderId()
-    const avatarsFolderId = await ensureFolder(drive, AVATAR_FOLDER_NAME, rootId)
-    const userFolderId = await ensureFolder(drive, sanitizeName(userId), avatarsFolderId)
 
     const { data: authUser } = await supabase.auth.admin.getUserById(userId)
     const currentMetadata = authUser.user?.user_metadata || {}
     const previousDriveFileId = currentMetadata.avatar_drive_file_id as string | undefined
-
-    if (previousDriveFileId) {
-      try {
-        await drive.files.delete({ fileId: previousDriveFileId })
-      } catch {
-        // Ignora falha de limpeza do arquivo anterior.
-      }
-    }
+    const previousLocalStorageKey = currentMetadata.avatar_storage_key as string | undefined
 
     const fileExtension = path.extname(file.name || "").toLowerCase() || ".jpg"
     const finalName = `avatar_${Date.now()}${fileExtension}`
+    const localStorageKey = `${sanitizeName(userId)}_${Date.now()}${fileExtension}`
 
-    const created = await drive.files.create({
-      requestBody: {
-        name: finalName,
-        parents: [userFolderId],
-      },
-      media: {
-        mimeType: file.type,
-        body: Readable.from(fileBuffer),
-      },
-      fields: "id",
-    })
+    let driveFileId: string | null = null
+    let storedLocally = false
+    let lastDriveError: string | null = null
 
-    const driveFileId = created.data.id
+    try {
+      const rootId = getDriveRootFolderId()
+      const driveClients = await getDriveClients()
+
+      for (const drive of driveClients) {
+        try {
+          const avatarsFolderId = await ensureFolder(drive, AVATAR_FOLDER_NAME, rootId)
+          const userFolderId = await ensureFolder(drive, sanitizeName(userId), avatarsFolderId)
+
+          if (previousDriveFileId) {
+            try {
+              await drive.files.delete({ fileId: previousDriveFileId, supportsAllDrives: true })
+            } catch {
+              // Ignora falha de limpeza do arquivo anterior.
+            }
+          }
+
+          const created = await drive.files.create({
+            requestBody: {
+              name: finalName,
+              parents: [userFolderId],
+            },
+            media: {
+              mimeType: file.type,
+              body: Readable.from(fileBuffer),
+            },
+            fields: "id",
+            supportsAllDrives: true,
+          })
+
+          driveFileId = created.data.id || null
+          if (driveFileId) {
+            break
+          }
+        } catch (error) {
+          lastDriveError = describeDriveError(error)
+        }
+      }
+    } catch (error) {
+      lastDriveError = describeDriveError(error)
+    }
+
     if (!driveFileId) {
-      return NextResponse.json({ error: "Nao foi possivel salvar a imagem no Drive." }, { status: 500 })
+      storedLocally = await saveLocalAvatar(localStorageKey, fileBuffer)
+
+      if (!storedLocally) {
+        return NextResponse.json(
+          { error: lastDriveError || "Nao foi possivel salvar a imagem do avatar." },
+          { status: 500 }
+        )
+      }
     }
 
     await supabase.auth.admin.updateUserById(userId, {
@@ -88,9 +119,32 @@ export async function POST(request: Request) {
         ...currentMetadata,
         avatar_url: avatarUrl,
         avatar_drive_file_id: driveFileId,
+        avatar_storage_key: storedLocally ? localStorageKey : null,
         avatar_mime_type: file.type,
       },
     })
+
+    if (storedLocally) {
+      if (previousDriveFileId) {
+        try {
+          const driveClients = await getDriveClients()
+          for (const drive of driveClients) {
+            try {
+              await drive.files.delete({ fileId: previousDriveFileId, supportsAllDrives: true })
+              break
+            } catch {
+              // Ignora falha de limpeza do arquivo antigo.
+            }
+          }
+        } catch {
+          // Ignora indisponibilidade do Drive durante limpeza.
+        }
+      }
+    }
+
+    if (previousLocalStorageKey && previousLocalStorageKey !== localStorageKey) {
+      await deleteLocalAvatar(previousLocalStorageKey)
+    }
 
     const response = NextResponse.json({ success: true, avatarUrl })
 

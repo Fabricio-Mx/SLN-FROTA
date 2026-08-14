@@ -12,6 +12,7 @@ export type FuelRecord = {
   tipoCombustivel: string
   valor: number
   dateTime: string
+  postingDate?: string | null
 }
 
 export type FuelWeeklyComparisonMonth = {
@@ -35,6 +36,7 @@ export type FuelResponse = {
   weeklyComparison: FuelWeeklyComparison
   selectedMonth?: string | null
   currentMonth?: string | null
+  lastImportedAt?: string | null
   warning?: string
 }
 
@@ -86,6 +88,7 @@ export type UseFuelDataResult = {
   monthlyCount: number
   reportDate: Date
   monthlyReferenceDate: Date
+  lastImportedAt: string | null
   isLoading: boolean
   error: Error | undefined
   warning?: string
@@ -180,6 +183,7 @@ export function useFuelData(): UseFuelDataResult {
     currentMonth: data?.currentMonth ?? null,
     setSelectedMonth: setRequestedMonth,
     ...metrics,
+    lastImportedAt: data?.lastImportedAt ?? null,
     isLoading,
     error,
     warning: data?.warning,

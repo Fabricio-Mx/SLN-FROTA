@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react"
 import dynamic from "next/dynamic"
 import Link from "next/link"
-import { ArrowRight, Car, CircleDollarSign, Fuel, LayoutDashboard, Plus, Search, ShieldAlert, Sparkles, Truck, Users } from "lucide-react"
+import { ArrowRight, CalendarRange, Car, CircleDollarSign, Download, Fuel, Plus, Search, Sparkles, Users } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import type { AppUser, UserRole } from "@/lib/types"
 import { canAddColaboradores, canAddVehicles, canEditMultaRhStatus, canManageMultas } from "@/lib/auth-shared"
@@ -12,8 +12,11 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Header } from "@/components/fleet/header"
+import { Header, type HeaderNotification } from "@/components/fleet/header"
+import { AppSidebar } from "@/components/dashboard/app-sidebar"
+import { SHOW_AGREGADOS_SECTION, getSectionMeta, type DashboardSection } from "@/components/dashboard/nav-config"
 import { StatsCards } from "@/components/fleet/stats-cards"
+import { OverviewInsights } from "@/components/dashboard/overview-insights"
 import { Filters } from "@/components/fleet/filters"
 import { VehiclesTable } from "@/components/fleet/vehicles-table"
 import { VehicleModal } from "@/components/fleet/vehicle-modal"
@@ -22,6 +25,7 @@ import { AgregadosOverview } from "@/components/fleet/agregados-overview"
 import { DeleteDialog } from "@/components/fleet/delete-dialog"
 import { ColaboradoresTable } from "@/components/fleet/colaboradores-table"
 import { ColaboradoresFilters, type ColaboradorFilters } from "@/components/fleet/colaboradores-filters"
+import { ColaboradoresImportPanel } from "@/components/fleet/colaboradores-import-panel"
 import { ColaboradorModal } from "@/components/fleet/colaborador-modal"
 import { AssignModal } from "@/components/fleet/assign-modal"
 import {
@@ -34,25 +38,20 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { FuelDataProvider, useFuelDataContext } from "@/components/fuel/fuel-data-provider"
+import { FuelDataProvider, useOptionalFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { FuelStatusAlert } from "@/components/fuel/fuel-status-alert"
 import { MultasDashboard } from "@/components/multas/multas-dashboard"
 import { useVehicles } from "@/hooks/use-vehicles"
-import { useColaboradores } from "@/hooks/use-colaboradores"
+import { refreshColaboradores, useColaboradores } from "@/hooks/use-colaboradores"
 import { useMultas } from "@/hooks/use-multas"
 import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
+import { isAgregadoVehicle, isVisibleInFrotaSection } from "@/lib/vehicle-classification"
 import type { Vehicle, VehicleFormData, VehicleFilters, Colaborador, ColaboradorFormData } from "@/lib/types"
 
-const FuelDashboardOverview = dynamic(
-  () => import("@/components/fuel/fuel-dashboard-overview").then((module) => module.FuelDashboardOverview),
-  { loading: () => <FuelSectionLoading /> }
-)
-const FuelImportPanel = dynamic(
-  () => import("@/components/fuel/fuel-import-panel").then((module) => module.FuelImportPanel),
-  { loading: () => <FuelSectionLoading /> }
-)
-const FuelTransactionsTable = dynamic(
-  () => import("@/components/fuel/fuel-transactions-table").then((module) => module.FuelTransactionsTable),
+export type { DashboardSection } from "@/components/dashboard/nav-config"
+
+const FuelWorkspace = dynamic(
+  () => import("@/components/fuel/fuel-workspace").then((module) => module.FuelWorkspace),
   { loading: () => <FuelSectionLoading /> }
 )
 
@@ -72,92 +71,10 @@ const DEFAULT_COLABORADOR_FILTERS: ColaboradorFilters = {
   statusCNH: "todos",
 }
 
-export type DashboardSection = "overview" | "veiculos-frota" | "veiculos-agregados" | "colaboradores" | "combustivel" | "multas"
-
 type FleetDashboardClientProps = {
   initialUser: AppUser
   initialSection?: DashboardSection
 }
-
-type DashboardSectionItem = {
-  id: DashboardSection
-  href: string
-  label: string
-  description: string
-  icon: typeof LayoutDashboard
-}
-
-const DASHBOARD_SECTION_BUTTON_STYLES: Record<DashboardSection, { active: string; inactive: string }> = {
-  overview: {
-    active: "border-[#7CB342] bg-[#7CB342] text-white hover:bg-[#6d9d39] hover:border-[#6d9d39]",
-    inactive: "border-[#cfe3b2] bg-[#f3f9e8] text-[#6c9730] hover:bg-[#e8f3d6] hover:border-[#bcd88f] hover:text-[#5f8828]",
-  },
-  "veiculos-frota": {
-    active: "border-[#2f7ddf] bg-[#2f7ddf] text-white hover:bg-[#256fca] hover:border-[#256fca]",
-    inactive: "border-[#c7daf7] bg-[#edf5ff] text-[#2f7ddf] hover:bg-[#e3efff] hover:border-[#adcaf4] hover:text-[#256fca]",
-  },
-  "veiculos-agregados": {
-    active: "border-[#0f8ecf] bg-[#0f8ecf] text-white hover:bg-[#0b7db6] hover:border-[#0b7db6]",
-    inactive: "border-[#c9e6f6] bg-[#ebf8ff] text-[#0f8ecf] hover:bg-[#def3ff] hover:border-[#a9d8ef] hover:text-[#0b7db6]",
-  },
-  colaboradores: {
-    active: "border-[#159a8c] bg-[#159a8c] text-white hover:bg-[#118477] hover:border-[#118477]",
-    inactive: "border-[#c8e9e4] bg-[#eefaf7] text-[#159a8c] hover:bg-[#e0f4f0] hover:border-[#9fd8d0] hover:text-[#118477]",
-  },
-  combustivel: {
-    active: "border-[#7c3aed] bg-[#7c3aed] text-white hover:bg-[#6d28d9] hover:border-[#6d28d9]",
-    inactive: "border-[#ddd1f5] bg-[#f5f0ff] text-[#7c3aed] hover:bg-[#ede4ff] hover:border-[#cdbaf4] hover:text-[#6d28d9]",
-  },
-  multas: {
-    active: "border-[#e0aa22] bg-[#e0aa22] text-white hover:bg-[#c99313] hover:border-[#c99313]",
-    inactive: "border-[#f0dfaa] bg-[#fff8df] text-[#b98507] hover:bg-[#fdf1c8] hover:border-[#e7cd7a] hover:text-[#9f7306]",
-  },
-}
-
-const DASHBOARD_SECTIONS: DashboardSectionItem[] = [
-  {
-    id: "overview",
-    href: "/dashboard",
-    label: "Painel Geral",
-    description: "Resumo consolidado com os principais indicadores e busca rápida.",
-    icon: LayoutDashboard,
-  },
-  {
-    id: "veiculos-frota",
-    href: "/dashboard/veiculos-frota",
-    label: "Veículos Frota",
-    description: "Cadastro, filtros e acompanhamento dos veículos próprios e alugados.",
-    icon: Car,
-  },
-  {
-    id: "veiculos-agregados",
-    href: "/dashboard/veiculos-agregados",
-    label: "Veículos Agregados",
-    description: "Controle operacional dos veículos agregados e seus vínculos.",
-    icon: Truck,
-  },
-  {
-    id: "colaboradores",
-    href: "/dashboard/colaboradores",
-    label: "Colaboradores",
-    description: "Gestão dos colaboradores, documentos e vencimentos de CNH.",
-    icon: Users,
-  },
-  {
-    id: "combustivel",
-    href: "/dashboard/combustivel",
-    label: "Combustível",
-    description: "Resumo mensal, importação de dados e transações do combustível.",
-    icon: Fuel,
-  },
-  {
-    id: "multas",
-    href: "/dashboard/multas",
-    label: "Multas",
-    description: "Acompanhamento de infrações, indicação de condutor, valores e status de tratativa.",
-    icon: ShieldAlert,
-  },
-]
 
 function FuelSectionLoading() {
   return <div className="h-24 animate-pulse rounded-lg border border-border bg-muted/40" />
@@ -199,20 +116,25 @@ function normalizePlate(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "")
 }
 
-function getSectionMeta(section: DashboardSection): Pick<DashboardSectionItem, "label" | "description"> {
-  const matchedSection = DASHBOARD_SECTIONS.find((item) => item.id === section)
-
-  return {
-    label: matchedSection?.label || "Painel Geral",
-    description: matchedSection?.description || "Resumo consolidado do sistema.",
-  }
+function formatDateBR(date: Date): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date)
 }
 
 const DASHBOARD_PAGE_FRAME_CLASS = "w-full max-w-none"
-const DASHBOARD_HEADER_CARD_CLASS = "w-full rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6"
-const DASHBOARD_CONTENT_STAGE_CLASS = "min-h-[calc(100vh-20rem)] w-full max-w-none"
+const DASHBOARD_HEADER_CARD_CLASS = "w-full rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5 lg:p-6"
+const DASHBOARD_CONTENT_STAGE_CLASS = "min-h-[calc(100vh-18rem)] w-full max-w-none"
 
 export function FleetDashboardClient({ initialUser, initialSection = "overview" }: FleetDashboardClientProps) {
+  const needsFuelData = initialSection === "overview" || initialSection === "combustivel"
+
+  if (!needsFuelData) {
+    return <FleetDashboardContent initialUser={initialUser} initialSection={initialSection} />
+  }
+
   return (
     <FuelDataProvider>
       <FleetDashboardContent initialUser={initialUser} initialSection={initialSection} />
@@ -221,19 +143,62 @@ export function FleetDashboardClient({ initialUser, initialSection = "overview" 
 }
 
 function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDashboardClientProps>) {
-  const { monthlyTotal: monthlyFuelTotal } = useFuelDataContext()
-  const { vehicles, addVehicle, updateVehicle, deleteVehicle } = useVehicles()
+  const resolvedInitialSection = initialSection === "veiculos-agregados" && !SHOW_AGREGADOS_SECTION
+    ? "veiculos-frota"
+    : initialSection
+  const fuelData = useOptionalFuelDataContext()
+  const shouldLoadVehicles = resolvedInitialSection !== "combustivel"
+  const shouldLoadColaboradores = resolvedInitialSection !== "combustivel"
+  const shouldLoadMultas = resolvedInitialSection === "overview"
+  const monthlyFuelTotal = fuelData?.monthlyTotal ?? 0
+  const { vehicles, addVehicle, updateVehicle, deleteVehicle } = useVehicles(shouldLoadVehicles)
   const {
     colaboradores,
     addColaborador,
     updateColaborador,
     deleteColaborador,
-  } = useColaboradores()
-  const { multas } = useMultas()
+  } = useColaboradores(shouldLoadColaboradores)
+  const { multas } = useMultas(shouldLoadMultas)
 
   const userRole: UserRole = initialUser.role || "consulta"
   const isMaster = initialUser.isMaster === true
-  const { label: sectionLabel, description: sectionDescription } = getSectionMeta(initialSection)
+  const { label: sectionLabel, description: sectionDescription } = getSectionMeta(resolvedInitialSection)
+
+  const notifications = useMemo<HeaderNotification[]>(() => {
+    const items: HeaderNotification[] = []
+    const contratosVencendo = countExpiringContracts(vehicles.filter((vehicle) => vehicle.frota))
+    const cnhAlertas = countCNHAlerts(colaboradores)
+    const multasPendentes = multas.filter((multa) => multa.rhStatus === "pendente").length
+
+    if (contratosVencendo > 0) {
+      items.push({
+        id: "contratos",
+        title: `${contratosVencendo} contrato${contratosVencendo > 1 ? "s" : ""} a vencer`,
+        description: "Vencimento nos próximos 30 dias.",
+        href: "/dashboard/veiculos-frota",
+      })
+    }
+
+    if (cnhAlertas > 0) {
+      items.push({
+        id: "cnh",
+        title: `${cnhAlertas} CNH${cnhAlertas > 1 ? "s" : ""} em atenção`,
+        description: "Vencidas ou vencendo nos próximos 30 dias.",
+        href: "/dashboard/colaboradores",
+      })
+    }
+
+    if (multasPendentes > 0) {
+      items.push({
+        id: "multas",
+        title: `${multasPendentes} multa${multasPendentes > 1 ? "s" : ""} pendente${multasPendentes > 1 ? "s" : ""}`,
+        description: "Aguardando tratativa do RH.",
+        href: "/dashboard/multas",
+      })
+    }
+
+    return items
+  }, [vehicles, colaboradores, multas])
 
   const [filters, setFilters] = useState<VehicleFilters>(DEFAULT_VEHICLE_FILTERS)
   const [colaboradorFilters, setColaboradorFilters] = useState<ColaboradorFilters>(DEFAULT_COLABORADOR_FILTERS)
@@ -246,6 +211,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
 
   const [isAgregadoModalOpen, setIsAgregadoModalOpen] = useState(false)
   const [editingAgregado, setEditingAgregado] = useState<Vehicle | null>(null)
+
 
   const [isColaboradorModalOpen, setIsColaboradorModalOpen] = useState(false)
   const [editingColaborador, setEditingColaborador] = useState<Colaborador | null>(null)
@@ -299,8 +265,8 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       const matchesStatus =
         filters.statusVeiculo === "todos" ||
         (filters.statusVeiculo === "frota" && vehicle.frota) ||
-        (filters.statusVeiculo === "disponivel" && !vehicle.frota && !vehicle.colaboradorId) ||
-        (filters.statusVeiculo === "ocupado" && !vehicle.frota && vehicle.colaboradorId)
+        (filters.statusVeiculo === "disponivel" && !vehicle.colaboradorId && !vehicle.naOficina && !isVehicleDueForReview(vehicle)) ||
+        (filters.statusVeiculo === "ocupado" && Boolean(vehicle.colaboradorId))
 
       const vencimento = new Date(vehicle.dataVencimentoContrato)
       const contratoVencendo =
@@ -331,12 +297,14 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
         normalizedSearch === "" ||
         colaborador.nome.toLowerCase().includes(normalizedSearch) ||
         colaborador.cpf.toLowerCase().includes(normalizedSearch) ||
-        (colaborador.telefone && colaborador.telefone.includes(colaboradorFilters.search))
+        (colaborador.telefone && colaborador.telefone.includes(colaboradorFilters.search)) ||
+        colaborador.centroCusto.toLowerCase().includes(normalizedSearch)
 
       const vencimento = new Date(colaborador.dataVencimentoCNH)
-      const vencida = vencimento < hoje
-      const vencendo = vencimento <= trintaDias && vencimento >= hoje
-      const valida = vencimento > trintaDias
+      const hasValidDate = !Number.isNaN(vencimento.getTime())
+      const vencida = hasValidDate && vencimento < hoje
+      const vencendo = hasValidDate && vencimento <= trintaDias && vencimento >= hoje
+      const valida = hasValidDate && vencimento > trintaDias
 
       const matchesStatusCNH =
         colaboradorFilters.statusCNH === "todos" ||
@@ -354,21 +322,23 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
 
       const dateA = new Date(a.dataVencimentoCNH).getTime()
       const dateB = new Date(b.dataVencimentoCNH).getTime()
+      const normalizedDateA = Number.isNaN(dateA) ? Number.POSITIVE_INFINITY : dateA
+      const normalizedDateB = Number.isNaN(dateB) ? Number.POSITIVE_INFINITY : dateB
 
       if (colaboradorFilters.ordenacao === "cnh_vencimento_asc") {
-        return dateA - dateB
+        return normalizedDateA - normalizedDateB
       }
 
-      return dateB - dateA
+      return normalizedDateB - normalizedDateA
     })
 
     return result
   }, [colaboradores, colaboradorFilters])
 
-  const veiculosFrota = useMemo(() => filteredVehicles.filter((vehicle) => vehicle.frota === true), [filteredVehicles])
-  const veiculosAgregados = useMemo(() => filteredVehicles.filter((vehicle) => !vehicle.frota), [filteredVehicles])
+  const veiculosAgregados = useMemo(() => filteredVehicles.filter((vehicle) => isAgregadoVehicle(vehicle)), [filteredVehicles])
+  const veiculosFrota = useMemo(() => filteredVehicles.filter((vehicle) => isVisibleInFrotaSection(vehicle)), [filteredVehicles])
   const totalVeiculosFrota = useMemo(() => vehicles.filter((vehicle) => vehicle.frota), [vehicles])
-  const totalVeiculosAgregados = useMemo(() => vehicles.filter((vehicle) => !vehicle.frota), [vehicles])
+  const totalVeiculosAgregados = useMemo(() => vehicles.filter((vehicle) => isAgregadoVehicle(vehicle)), [vehicles])
 
   const quickSearchResults = useMemo(() => {
     const normalizedPlate = normalizePlate(quickSearch.trim())
@@ -387,14 +357,6 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
         accent: "bg-primary/10 text-primary",
         description: `${totalVeiculosFrota.filter((vehicle) => vehicle.colaboradorId).length} em uso • ${countExpiringContracts(totalVeiculosFrota)} contratos a vencer`,
         icon: Car,
-      },
-      {
-        href: "/dashboard/veiculos-agregados",
-        label: "Veículos Agregados",
-        value: totalVeiculosAgregados.length.toString(),
-        accent: "bg-cyan-500/10 text-cyan-700",
-        description: `${totalVeiculosAgregados.filter((vehicle) => !vehicle.colaboradorId).length} sem colaborador • ${countExpiringContracts(totalVeiculosAgregados)} contratos a vencer`,
-        icon: Truck,
       },
       {
         href: "/dashboard/colaboradores",
@@ -421,7 +383,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
         icon: CircleDollarSign,
       },
     ],
-    [colaboradores, monthlyFuelTotal, multas.length, totalVeiculosAgregados, totalVeiculosFrota, vehicles]
+    [colaboradores, monthlyFuelTotal, multas.length, totalVeiculosFrota, vehicles]
   )
 
   const handleAddVehicle = () => {
@@ -436,11 +398,28 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
 
   const handleSaveVehicle = async (data: VehicleFormData) => {
     try {
+      const normalizedData = !data.frota
+        ? {
+            ...data,
+            frota: false,
+            colaboradorId: null,
+            naOficina: false,
+            paraRevisao: false,
+          }
+        : data
+
       if (editingVehicle) {
-        await updateVehicle(editingVehicle.id, data)
-        toast({ title: "Sucesso", description: "Veículo atualizado com sucesso!" })
+        await updateVehicle(editingVehicle.id, normalizedData)
+        if (!data.frota) {
+          toast({
+            title: "Status atualizado",
+            description: "O veículo continua na página de frota como disponível, sem entrar na contagem da frota.",
+          })
+        } else {
+          toast({ title: "Sucesso", description: "Veículo atualizado com sucesso!" })
+        }
       } else {
-        await addVehicle({ ...data, frota: true })
+        await addVehicle({ ...normalizedData, frota: true })
         toast({ title: "Sucesso", description: "Veículo adicionado com sucesso!" })
       }
     } catch (error) {
@@ -617,7 +596,35 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
   }
 
   const renderPrimaryAction = () => {
-    if (initialSection === "veiculos-frota" && canAddVehicles(userRole)) {
+    if (resolvedInitialSection === "overview") {
+      const today = new Date()
+      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+      const periodLabel = `${formatDateBR(startOfMonth)} - ${formatDateBR(today)}`
+
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex h-9 items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 text-xs font-medium text-muted-foreground sm:h-10 sm:text-sm">
+            <CalendarRange className="h-4 w-4" />
+            {periodLabel}
+          </span>
+          <Button
+            type="button"
+            onClick={() =>
+              toast({
+                title: "Exportação em breve",
+                description: "A exportação de relatórios será disponibilizada em uma próxima atualização.",
+              })
+            }
+            className="h-9 gap-2 bg-[#7CB342] text-white hover:bg-[#6d9d39] sm:h-10"
+          >
+            <Download className="h-4 w-4" />
+            Exportar Relatório
+          </Button>
+        </div>
+      )
+    }
+
+    if (resolvedInitialSection === "veiculos-frota" && canAddVehicles(userRole)) {
       return (
         <Button onClick={handleAddVehicle} className="gap-2">
           <Plus className="h-4 w-4" />
@@ -626,7 +633,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       )
     }
 
-    if (initialSection === "veiculos-agregados" && canAddVehicles(userRole)) {
+    if (resolvedInitialSection === "veiculos-agregados" && SHOW_AGREGADOS_SECTION && canAddVehicles(userRole)) {
       return (
         <Button onClick={handleAddAgregado} className="gap-2">
           <Plus className="h-4 w-4" />
@@ -635,7 +642,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       )
     }
 
-    if (initialSection === "colaboradores" && canAddColaboradores(userRole)) {
+    if (resolvedInitialSection === "colaboradores" && canAddColaboradores(userRole)) {
       return (
         <Button onClick={handleAddColaborador} className="gap-2">
           <Plus className="h-4 w-4" />
@@ -649,7 +656,9 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
 
   const renderOverview = () => (
     <div className="w-full space-y-6">
-      <StatsCards vehicles={vehicles} colaboradores={colaboradores} multas={multas} />
+      <StatsCards vehicles={vehicles} multas={multas} />
+
+      <OverviewInsights vehicles={vehicles} colaboradores={colaboradores} multas={multas} fuelData={fuelData} />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
         <Card className="overflow-hidden rounded-[1.6rem] border-[#d9e3ef] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] shadow-[0_18px_40px_rgba(61,97,146,0.10)]">
@@ -699,7 +708,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
               <div className="space-y-3">
                 {quickSearchResults.map((vehicle) => {
                   const colaboradorNome = vehicle.colaboradorId ? colaboradoresById.get(vehicle.colaboradorId)?.nome : null
-                  const destinationHref = vehicle.frota ? "/dashboard/veiculos-frota" : "/dashboard/veiculos-agregados"
+                  const destinationHref = "/dashboard/veiculos-frota"
 
                   return (
                     <div
@@ -709,8 +718,8 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
                       <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-base font-semibold text-slate-900">{vehicle.placa}</span>
-                          <Badge className={vehicle.frota ? "bg-[#2f7ddf]/10 text-[#2f7ddf] hover:bg-[#2f7ddf]/20" : "bg-sky-500/10 text-sky-600 hover:bg-sky-500/20"}>
-                            {vehicle.frota ? "Frota" : "Agregado"}
+                          <Badge className="bg-[#2f7ddf]/10 text-[#2f7ddf] hover:bg-[#2f7ddf]/20">
+                            Veículo
                           </Badge>
                           {colaboradorNome ? (
                             <Badge variant="outline" className="border-[#d9e2ed] bg-white text-slate-600">{colaboradorNome}</Badge>
@@ -777,7 +786,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
   )
 
   const renderCurrentSection = () => {
-    if (initialSection === "veiculos-frota") {
+    if (resolvedInitialSection === "veiculos-frota") {
       return (
         <div className="w-full space-y-4">
           <Filters filters={filters} onFiltersChange={setFilters} />
@@ -794,7 +803,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       )
     }
 
-    if (initialSection === "veiculos-agregados") {
+    if (resolvedInitialSection === "veiculos-agregados" && SHOW_AGREGADOS_SECTION) {
       return (
         <div className="w-full">
           <AgregadosOverview
@@ -810,9 +819,10 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       )
     }
 
-    if (initialSection === "colaboradores") {
+    if (resolvedInitialSection === "colaboradores") {
       return (
         <div className="w-full space-y-4">
+          {isMaster ? <ColaboradoresImportPanel isMaster={isMaster} onImported={refreshColaboradores} /> : null}
           <ColaboradoresFilters filters={colaboradorFilters} onFiltersChange={setColaboradorFilters} />
           <ColaboradoresTable
             colaboradores={filteredColaboradores}
@@ -825,18 +835,16 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       )
     }
 
-    if (initialSection === "combustivel") {
+    if (resolvedInitialSection === "combustivel") {
       return (
         <div className="w-full space-y-4">
           <FuelStatusAlert />
-          <FuelDashboardOverview />
-          <FuelImportPanel isMaster={isMaster} />
-          <FuelTransactionsTable />
+          <FuelWorkspace isMaster={isMaster} />
         </div>
       )
     }
 
-    if (initialSection === "multas") {
+    if (resolvedInitialSection === "multas") {
       return (
         <div className="w-full">
           <MultasDashboard
@@ -852,48 +860,37 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     return renderOverview()
   }
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <Header userRole={userRole} userEmail={initialUser.email} userName={initialUser.nome} userAvatarUrl={initialUser.avatarUrl} />
+    <div className="flex min-h-screen bg-background">
+      <AppSidebar activeSection={resolvedInitialSection} isMaster={isMaster} />
 
-      <main className="mx-auto w-full max-w-[1440px] px-5 py-6 sm:px-6 lg:px-8 xl:px-10">
-        <div className="min-h-[calc(100vh-12rem)] w-full space-y-6">
-          <div className={DASHBOARD_HEADER_CARD_CLASS}>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-1">
-                <h2 className="text-[2rem] font-semibold text-foreground">{sectionLabel}</h2>
-                <p className="max-w-4xl text-[0.98rem] text-muted-foreground">{sectionDescription}</p>
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+        <Header
+          userRole={userRole}
+          userEmail={initialUser.email}
+          userName={initialUser.nome}
+          userAvatarUrl={initialUser.avatarUrl}
+          activeSection={resolvedInitialSection}
+          isMaster={isMaster}
+          notifications={notifications}
+        />
+
+        <main className="mx-auto w-full max-w-[1440px] px-4 py-3 sm:px-5 sm:py-4 lg:px-6 lg:py-5 xl:px-8 xl:py-6">
+          <div className="min-h-[calc(100vh-9rem)] w-full space-y-4 sm:min-h-[calc(100vh-10rem)] sm:space-y-5 lg:space-y-6">
+            <div className={DASHBOARD_HEADER_CARD_CLASS}>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 space-y-1">
+                  <h2 className="text-[1.45rem] font-semibold text-foreground sm:text-[1.7rem] xl:text-[2rem]">{sectionLabel}</h2>
+                  <p className="max-w-4xl text-sm text-muted-foreground sm:text-[0.98rem]">{sectionDescription}</p>
+                </div>
+
+                {renderPrimaryAction()}
               </div>
-              {renderPrimaryAction()}
             </div>
 
-            <div className="mt-5 flex flex-wrap gap-2.5">
-              {DASHBOARD_SECTIONS.map((section) => {
-                const isActive = section.id === initialSection
-                const palette = DASHBOARD_SECTION_BUTTON_STYLES[section.id]
-
-                return (
-                  <Button
-                    key={section.id}
-                    asChild
-                    variant="outline"
-                    className={cn(
-                      "h-10 gap-2 rounded-xl px-4 text-[0.95rem] shadow-sm transition-colors",
-                      isActive ? palette.active : palette.inactive
-                    )}
-                  >
-                    <Link href={section.href}>
-                      <section.icon className="h-4 w-4" />
-                      {section.label}
-                    </Link>
-                  </Button>
-                )
-              })}
-            </div>
+            <section className={cn(DASHBOARD_PAGE_FRAME_CLASS, DASHBOARD_CONTENT_STAGE_CLASS)}>{renderCurrentSection()}</section>
           </div>
-
-          <section className={cn(DASHBOARD_PAGE_FRAME_CLASS, DASHBOARD_CONTENT_STAGE_CLASS)}>{renderCurrentSection()}</section>
-        </div>
-      </main>
+        </main>
+      </div>
 
       <VehicleModal
         open={isVehicleModalOpen}

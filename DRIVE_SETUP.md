@@ -51,3 +51,5 @@ Depois da configuracao:
 
 - Se o ambiente estiver sem Drive configurado, o sistema agora usa apenas o armazenamento local sem mostrar falso alerta.
 - Se o Drive estiver configurado e ainda assim falhar, o aviso continua aparecendo porque ai o problema e real: permissao, credencial, callback OAuth ou token salvo.
+- Em deploy na Vercel, o armazenamento local nao e persistente para esse fluxo e pode ficar indisponivel em runtime. Importacao e exclusao de combustivel dependem do Drive funcionando.
+- Se a pasta raiz estiver em Shared Drive, as credenciais precisam ter acesso a ela. O projeto agora envia `supportsAllDrives`, mas a conta ainda precisa estar compartilhada com permissao de edicao.

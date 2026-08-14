@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useRef, useState } from "react"
 import { CreditCard, Edit, MoreHorizontal, Trash2, UserPlus, UserMinus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -36,14 +37,18 @@ function formatDate(dateString: string): string {
 }
 
 function isContractExpiring(dateString: string): boolean {
+  if (!dateString) return false
   const vencimento = new Date(dateString)
+  if (Number.isNaN(vencimento.getTime())) return false
   const today = new Date()
   const thirtyDaysFromNow = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000)
   return vencimento <= thirtyDaysFromNow
 }
 
 function isContractExpired(dateString: string): boolean {
+  if (!dateString) return false
   const vencimento = new Date(dateString)
+  if (Number.isNaN(vencimento.getTime())) return false
   const today = new Date()
   return vencimento < today
 }
@@ -59,7 +64,8 @@ function getEmpresaLocacaoNome(empresa: string | null | undefined): string {
   const nomes: Record<string, string> = {
     localiza: "Localiza",
     lok_motors: "LOK MOTORS",
-    movida: "Movida",
+    movida: "4LOC",
+    "4loc": "4LOC",
     veiculo_sln: "Veículo SLN",
   }
   return empresa ? nomes[empresa] || empresa : "-"
@@ -67,6 +73,7 @@ function getEmpresaLocacaoNome(empresa: string | null | undefined): string {
 
 function getFornecedorProprioNome(fornecedor: string | null | undefined): string {
   const nomes: Record<string, string> = {
+    veiculo_sln: "Veículo SLN",
     bradesco_financiamento: "Bradesco Financiamento",
     banco_pan: "BANCO PAN S.A.",
     banco_volkswagen: "BANCO VOLKSWAGEN S.A.",
@@ -109,11 +116,74 @@ function getCartaoLabel(cartao: Vehicle["cartaoCombustivel"]): string {
 }
 
 export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdit, onDelete, onAssign, onUnassign }: VehiclesTableProps) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const stickyScrollbarRef = useRef<HTMLDivElement | null>(null)
+  const [stickyScrollWidth, setStickyScrollWidth] = useState(0)
+  const [showStickyScrollbar, setShowStickyScrollbar] = useState(false)
+
   const getColaboradorName = (colaboradorId: string | null | undefined) => {
     if (!colaboradorId) return null
     const colaborador = colaboradores.find((c) => c.id === colaboradorId)
     return colaborador ? colaborador.nome : null
   }
+
+  useEffect(() => {
+    const wrapperElement = wrapperRef.current
+    const stickyScrollbarElement = stickyScrollbarRef.current
+    const tableContainer = wrapperElement?.querySelector<HTMLElement>("[data-slot='table-container']")
+
+    if (!stickyScrollbarElement || !tableContainer) return
+
+    let syncingFromTable = false
+    let syncingFromSticky = false
+
+    const syncMetrics = () => {
+      setStickyScrollWidth(tableContainer.scrollWidth)
+      setShowStickyScrollbar(tableContainer.scrollWidth > tableContainer.clientWidth)
+      stickyScrollbarElement.scrollLeft = tableContainer.scrollLeft
+    }
+
+    const handleTableScroll = () => {
+      if (syncingFromSticky) {
+        syncingFromSticky = false
+        return
+      }
+
+      syncingFromTable = true
+      stickyScrollbarElement.scrollLeft = tableContainer.scrollLeft
+    }
+
+    const handleStickyScroll = () => {
+      if (syncingFromTable) {
+        syncingFromTable = false
+        return
+      }
+
+      syncingFromSticky = true
+      tableContainer.scrollLeft = stickyScrollbarElement.scrollLeft
+    }
+
+    syncMetrics()
+    tableContainer.addEventListener("scroll", handleTableScroll)
+    stickyScrollbarElement.addEventListener("scroll", handleStickyScroll)
+
+    const resizeObserver = new ResizeObserver(syncMetrics)
+    resizeObserver.observe(tableContainer)
+    const tableElement = tableContainer.querySelector("table")
+    if (tableElement) {
+      resizeObserver.observe(tableElement)
+    }
+
+    window.addEventListener("resize", syncMetrics)
+
+    return () => {
+      tableContainer.removeEventListener("scroll", handleTableScroll)
+      stickyScrollbarElement.removeEventListener("scroll", handleStickyScroll)
+      resizeObserver.disconnect()
+      window.removeEventListener("resize", syncMetrics)
+    }
+  }, [vehicles.length, canManage])
+
   if (vehicles.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card py-16">
@@ -128,8 +198,8 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card">
-      <div className="overflow-x-auto">
+    <div ref={wrapperRef} className="space-y-2">
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
         <Table className="min-w-[1380px]">
         <TableHeader>
           <TableRow className="bg-muted/50">
@@ -139,10 +209,10 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
             <TableHead className="text-[0.88rem] font-semibold text-center">Próx. Revisão</TableHead>
             <TableHead className="text-[0.88rem] font-semibold text-center">Mensalidade</TableHead>
             <TableHead className="text-[0.88rem] font-semibold text-center">Vencimento</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-left">Origem</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-left">Cartão</TableHead>
             <TableHead className="text-[0.88rem] font-semibold text-center">Status</TableHead>
             <TableHead className="text-[0.88rem] font-semibold text-center">Sem Parar</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-left">Origem</TableHead>
+            <TableHead className="text-[0.88rem] font-semibold text-left">Cartão</TableHead>
             <TableHead className="text-[0.88rem] font-semibold text-left">Colaborador</TableHead>
             {canManage ? (
               <TableHead className="sticky right-0 z-10 w-[70px] bg-muted/50 text-center shadow-[-1px_0_0_hsl(var(--border))]"></TableHead>
@@ -151,8 +221,9 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
         </TableHeader>
         <TableBody>
           {vehicles.map((vehicle, index) => {
-            const expired = isContractExpired(vehicle.dataVencimentoContrato)
-            const expiring = isContractExpiring(vehicle.dataVencimentoContrato)
+            const hasContractExpiry = vehicle.tipoPropriedade === "alugado" && Boolean(vehicle.dataVencimentoContrato)
+            const expired = hasContractExpiry && isContractExpired(vehicle.dataVencimentoContrato)
+            const expiring = hasContractExpiry && isContractExpiring(vehicle.dataVencimentoContrato)
             const colaboradorNome = getColaboradorName(vehicle.colaboradorId)
             const rowHighlightClass = getRowHighlightClass(expired, expiring, index)
             const reviewMilestone = getVehicleReviewMilestone(vehicle)
@@ -199,69 +270,36 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
                   )}
                 </TableCell>
                 <TableCell className="align-middle text-center text-[0.92rem] font-medium">
-                  {formatCurrency(vehicle.mensalidade)}
+                  {vehicle.tipoPropriedade === "proprio" ? "-" : formatCurrency(vehicle.mensalidade)}
                 </TableCell>
                 <TableCell className="align-middle text-center">
-                  <span
-                    className={
-                      expired
-                        ? "font-medium text-destructive"
-                        : expiring
-                        ? "font-medium text-chart-3"
-                        : ""
-                    }
-                  >
-                    {formatDate(vehicle.dataVencimentoContrato)}
-                  </span>
-                  {expired && (
-                    <Badge variant="destructive" className="ml-2 text-[0.76rem]">
-                      Vencido
-                    </Badge>
+                  {hasContractExpiry ? (
+                    <>
+                      <span
+                        className={
+                          expired
+                            ? "font-medium text-destructive"
+                            : expiring
+                            ? "font-medium text-chart-3"
+                            : ""
+                        }
+                      >
+                        {formatDate(vehicle.dataVencimentoContrato)}
+                      </span>
+                      {expired && (
+                        <Badge variant="destructive" className="ml-2 text-[0.76rem]">
+                          Vencido
+                        </Badge>
+                      )}
+                      {!expired && expiring && (
+                        <Badge className="ml-2 bg-chart-3/10 text-chart-3 hover:bg-chart-3/20 text-[0.76rem]">
+                          Vencendo
+                        </Badge>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-[0.9rem] text-muted-foreground">-</span>
                   )}
-                  {!expired && expiring && (
-                    <Badge className="ml-2 bg-chart-3/10 text-chart-3 hover:bg-chart-3/20 text-[0.76rem]">
-                      Vencendo
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell className="align-middle text-left">
-                  <div className="space-y-2">
-                    <Badge
-                      variant={vehicle.tipoPropriedade === "proprio" ? "default" : "secondary"}
-                      className={
-                        vehicle.tipoPropriedade === "proprio"
-                          ? "bg-accent/10 text-accent hover:bg-accent/20"
-                          : ""
-                      }
-                    >
-                      {vehicle.tipoPropriedade === "proprio" ? "Próprio" : "Alugado"}
-                    </Badge>
-                    <div className="text-[0.78rem] text-muted-foreground">
-                      {vehicle.tipoPropriedade === "alugado"
-                        ? getEmpresaLocacaoNome(vehicle.empresaLocacao)
-                        : getFornecedorProprioNome(vehicle.fornecedorProprio)}
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="align-middle text-left">
-                  <div className="space-y-2">
-                    <Badge variant="outline" className={`gap-1.5 font-medium ${getCartaoBadgeClass(vehicle.cartaoCombustivel)}`}>
-                      <CreditCard className="h-3.5 w-3.5" />
-                      {getCartaoLabel(vehicle.cartaoCombustivel)}
-                    </Badge>
-                    {vehicle.numeroCartaoCombustivel || vehicle.placaCartaoCombustivel ? (
-                      <div className="space-y-1 text-[0.78rem]">
-                        <div className="font-medium text-foreground">
-                          {vehicle.numeroCartaoCombustivel || "Sem número"}
-                        </div>
-                        <div className="text-muted-foreground">
-                          Placa: {vehicle.placaCartaoCombustivel || "-"}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-[0.78rem] text-muted-foreground">Sem dados do cartão</span>
-                    )}
-                  </div>
                 </TableCell>
                 <TableCell className="align-middle text-center">
                   <div className="flex flex-wrap gap-1">
@@ -301,6 +339,38 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
                   ) : (
                     <span className="text-[0.9rem] font-medium text-muted-foreground">Não</span>
                   )}
+                </TableCell>
+                <TableCell className="align-middle text-left">
+                  <div className="space-y-2">
+                    <Badge
+                      variant={vehicle.tipoPropriedade === "proprio" ? "default" : "secondary"}
+                      className={
+                        vehicle.tipoPropriedade === "proprio"
+                          ? "bg-accent/10 text-accent hover:bg-accent/20"
+                          : ""
+                      }
+                    >
+                      {vehicle.tipoPropriedade === "proprio" ? "Próprio" : "Alugado"}
+                    </Badge>
+                    <div className="text-[0.78rem] text-muted-foreground">
+                      {vehicle.tipoPropriedade === "alugado"
+                        ? getEmpresaLocacaoNome(vehicle.empresaLocacao)
+                        : getFornecedorProprioNome(vehicle.fornecedorProprio)}
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell className="align-middle text-left">
+                  <div className="space-y-2">
+                    <Badge variant="outline" className={`gap-1.5 font-medium ${getCartaoBadgeClass(vehicle.cartaoCombustivel)}`}>
+                      <CreditCard className="h-3.5 w-3.5" />
+                      {getCartaoLabel(vehicle.cartaoCombustivel)}
+                    </Badge>
+                    {vehicle.placaCartaoCombustivel ? (
+                      <div className="text-[0.78rem] font-medium text-foreground">
+                        {vehicle.placaCartaoCombustivel}
+                      </div>
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell className="align-middle text-left">
                   {colaboradorNome ? (
@@ -354,6 +424,15 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
           })}
         </TableBody>
         </Table>
+      </div>
+      <div className={`sticky bottom-3 z-20 transition-opacity ${showStickyScrollbar ? "opacity-100" : "pointer-events-none opacity-0"}`}>
+        <div
+          ref={stickyScrollbarRef}
+          className="overflow-x-auto rounded-full border border-border bg-background/95 shadow-[0_8px_24px_rgba(15,23,42,0.12)] supports-[backdrop-filter]:bg-background/85"
+          aria-label="Rolagem horizontal fixa da tabela"
+        >
+          <div style={{ width: `${stickyScrollWidth}px` }} className="h-3" />
+        </div>
       </div>
     </div>
   )

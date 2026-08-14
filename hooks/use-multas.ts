@@ -405,8 +405,8 @@ const fetcher = async (): Promise<Multa[]> => {
   })
 }
 
-export function useMultas() {
-  const { data, error, isLoading } = useSWR<Multa[]>(SWR_KEY, fetcher, SWR_OPTIONS)
+export function useMultas(enabled = true) {
+  const { data, error, isLoading } = useSWR<Multa[]>(enabled ? SWR_KEY : null, fetcher, SWR_OPTIONS)
   const multas = data ?? []
 
   const addMulta = async (formData: MultaFormData): Promise<Multa> => {
