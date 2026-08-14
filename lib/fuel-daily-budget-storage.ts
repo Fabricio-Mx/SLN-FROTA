@@ -9,7 +9,8 @@ function isReadonlyFilesystemError(error: unknown): boolean {
   if (!(error instanceof Error) || !("code" in error)) return false
 
   const code = (error as NodeJS.ErrnoException).code
-  return code === "EROFS" || code === "EPERM" || code === "EACCES"
+  // ENOENT covers serverless read-only FS (e.g. Vercel /var/task) where mkdir fails
+  return code === "EROFS" || code === "EPERM" || code === "EACCES" || code === "ENOENT"
 }
 
 export async function readLocalFuelDailyBudgetData(): Promise<FuelDailyBudgetDataset> {

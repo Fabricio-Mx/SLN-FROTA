@@ -22,7 +22,7 @@ function isReadonlyFilesystemError(error: unknown): boolean {
   if (!(error instanceof Error) || !("code" in error)) return false
 
   const code = (error as NodeJS.ErrnoException).code
-  return code === "EROFS" || code === "EPERM" || code === "EACCES"
+  return code === "EROFS" || code === "EPERM" || code === "EACCES" || code === "ENOENT"
 }
 
 function normalizeInvoice(invoice: FuelFinancialInvoice): FuelFinancialInvoice | null {
