@@ -1,162 +1,42 @@
 import { NextResponse } from "next/server"
-import { Readable } from "node:stream"
-import { google } from "googleapis"
-import { createAdminClient } from "@/lib/supabase/admin"
 import { verifySession } from "@/lib/auth"
+import {
+  buildFuelRecordKey,
+  archiveFuelRecords,
+  dedupeFuelRecords,
+  getFuelMonthKey,
+  removeFuelMonthRecords,
+  readLocalFuelData,
+  readLocalFuelHistory,
+  readLocalFuelMetadata,
+  reconcileFuelMonths,
+  replaceFuelArchiveMonth,
+  saveLocalFuelData,
+  saveLocalFuelHistory,
+  saveLocalFuelMetadata,
+  sanitizeFuelStorage,
+  type FuelImportMetadata,
+  type FuelMonthArchive,
+  type FuelRecord,
+} from "@/lib/fuel-storage"
+import {
+  describeDriveError,
+  ensureFolder,
+  findFile,
+  getDriveClients,
+  getDriveRootFolderId,
+  readJsonFile,
+  upsertJsonFile,
+} from "@/lib/google-drive"
+import { formatFuelDateTimeStorage } from "@/lib/fuel-datetime"
 
 export const runtime = "nodejs"
+export const maxDuration = 60
 
-const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
-const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
-const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
-const GOOGLE_OAUTH_REDIRECT_URL = process.env.GOOGLE_OAUTH_REDIRECT_URL
 const FUEL_FOLDER_NAME = "combustivel"
 const FUEL_DATA_FILE = "fuel_data.json"
-
-type FuelRecord = {
-  cardPlate: string
-  cpfMotorista: string
-  nomeMotorista: string
-  tipoCombustivel: string
-  valor: number
-  dateTime: string
-}
-
-function getOAuthClient() {
-  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !GOOGLE_OAUTH_REDIRECT_URL) {
-    throw new Error("Google OAuth nao configurado.")
-  }
-
-  return new google.auth.OAuth2(
-    GOOGLE_OAUTH_CLIENT_ID,
-    GOOGLE_OAUTH_CLIENT_SECRET,
-    GOOGLE_OAUTH_REDIRECT_URL
-  )
-}
-
-async function getStoredRefreshToken() {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from("drive_tokens")
-    .select("refresh_token")
-    .eq("id", "default")
-    .maybeSingle()
-
-  if (error) {
-    throw new Error("Falha ao carregar token do Drive.")
-  }
-
-  return data?.refresh_token || null
-}
-
-async function getDriveClient() {
-  if (!DRIVE_FOLDER_ID) {
-    throw new Error("Drive folder id nao configurado.")
-  }
-
-  const refreshToken = await getStoredRefreshToken()
-  if (!refreshToken) {
-    throw new Error("Drive nao autorizado. Acesse /api/drive/oauth/start.")
-  }
-
-  const auth = getOAuthClient()
-  auth.setCredentials({ refresh_token: refreshToken })
-
-  return google.drive({ version: "v3", auth })
-}
-
-async function ensureFolder(drive: ReturnType<typeof google.drive>, name: string, parentId: string) {
-  const q = [
-    "mimeType='application/vnd.google-apps.folder'",
-    `name='${name.replace(/'/g, "\\'")}'`,
-    `'${parentId}' in parents`,
-    "trashed=false",
-  ].join(" and ")
-
-  const list = await drive.files.list({
-    q,
-    fields: "files(id, name)",
-  })
-
-  if (list.data.files && list.data.files.length > 0) {
-    return list.data.files[0].id as string
-  }
-
-  const created = await drive.files.create({
-    requestBody: {
-      name,
-      mimeType: "application/vnd.google-apps.folder",
-      parents: [parentId],
-    },
-    fields: "id",
-  })
-
-  return created.data.id as string
-}
-
-async function findFile(drive: ReturnType<typeof google.drive>, name: string, parentId: string) {
-  const q = [
-    `name='${name.replace(/'/g, "\\'")}'`,
-    `'${parentId}' in parents`,
-    "trashed=false",
-  ].join(" and ")
-
-  const list = await drive.files.list({
-    q,
-    fields: "files(id, name)",
-  })
-
-  return list.data.files?.[0] || null
-}
-
-async function readFuelData(drive: ReturnType<typeof google.drive>, fileId: string): Promise<FuelRecord[]> {
-  const response = await drive.files.get(
-    { fileId, alt: "media" },
-    { responseType: "arraybuffer" }
-  )
-
-  const buffer = Buffer.from(response.data as ArrayBuffer)
-  const text = buffer.toString("utf-8")
-  if (!text) return []
-
-  try {
-    const parsed = JSON.parse(text)
-    return Array.isArray(parsed) ? (parsed as FuelRecord[]) : []
-  } catch {
-    return []
-  }
-}
-
-async function saveFuelData(drive: ReturnType<typeof google.drive>, parentId: string, records: FuelRecord[]) {
-  const content = Buffer.from(JSON.stringify(records, null, 2))
-
-  const existing = await findFile(drive, FUEL_DATA_FILE, parentId)
-  if (existing?.id) {
-    const updated = await drive.files.update({
-      fileId: existing.id,
-      media: {
-        mimeType: "application/json",
-        body: Readable.from(content),
-      },
-      fields: "id, name",
-    })
-    return updated.data
-  }
-
-  const created = await drive.files.create({
-    requestBody: {
-      name: FUEL_DATA_FILE,
-      parents: [parentId],
-    },
-    media: {
-      mimeType: "application/json",
-      body: Readable.from(content),
-    },
-    fields: "id, name",
-  })
-
-  return created.data
-}
+const FUEL_HISTORY_FILE = "fuel_history.json"
+const FUEL_META_FILE = "fuel_meta.json"
 
 function decodeCsv(buffer: Buffer): string {
   const utf8 = buffer.toString("utf-8")
@@ -213,10 +93,15 @@ function parseDateTimeBr(value: string): string | null {
   if (!day || !month || !year) return null
 
   const [hour = 0, minute = 0, second = 0] = timePart.split(":").map(Number)
-  const date = new Date(year, month - 1, day, hour, minute, second)
-  if (Number.isNaN(date.getTime())) return null
 
-  return date.toISOString()
+  return formatFuelDateTimeStorage({
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+  })
 }
 
 function parseCurrency(value: string): number {
@@ -226,22 +111,117 @@ function parseCurrency(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-function buildKey(record: FuelRecord): string {
-  return [record.cardPlate, record.cpfMotorista, record.dateTime, record.valor].join("|")
+async function loadFuelStorage(): Promise<{
+  currentRecords: FuelRecord[]
+  history: FuelMonthArchive[]
+  metadata: FuelImportMetadata
+}> {
+  let currentRecords = await readLocalFuelData()
+  let history = await readLocalFuelHistory()
+  let metadata = await readLocalFuelMetadata()
+
+  try {
+    const rootId = getDriveRootFolderId()
+    const driveClients = await getDriveClients()
+
+    for (const drive of driveClients) {
+      try {
+        const fuelFolderId = await ensureFolder(drive, FUEL_FOLDER_NAME, rootId)
+        const currentFile = await findFile(drive, FUEL_DATA_FILE, fuelFolderId)
+        const historyFile = await findFile(drive, FUEL_HISTORY_FILE, fuelFolderId)
+        const metaFile = await findFile(drive, FUEL_META_FILE, fuelFolderId)
+        const driveRecords = currentFile?.id ? await readJsonFile<FuelRecord[]>(drive, currentFile.id) : []
+        const driveHistory = historyFile?.id ? await readJsonFile<FuelMonthArchive[]>(drive, historyFile.id) : []
+        const driveMetadata = metaFile?.id ? await readJsonFile<FuelImportMetadata>(drive, metaFile.id) : null
+
+        if (currentFile?.id && Array.isArray(driveRecords)) {
+          currentRecords = driveRecords
+        }
+
+        if (historyFile?.id && Array.isArray(driveHistory)) {
+          history = driveHistory
+        }
+
+        if (metaFile?.id && driveMetadata) {
+          metadata = {
+            lastImportedAt: typeof driveMetadata.lastImportedAt === "string" ? driveMetadata.lastImportedAt : null,
+          }
+        } else if (currentFile?.modifiedTime) {
+          metadata = {
+            lastImportedAt: currentFile.modifiedTime,
+          }
+        }
+
+        if (currentFile?.id || historyFile?.id || metaFile?.id) {
+          break
+        }
+      } catch {
+        // Tenta o proximo cliente.
+      }
+    }
+  } catch {
+    // Mantem o espelho local como fallback.
+  }
+
+  return { currentRecords, history, metadata }
+}
+
+async function persistFuelStorage(currentRecords: FuelRecord[], history: FuelMonthArchive[], metadata: FuelImportMetadata) {
+  let drivePersisted = false
+  let driveError: string | null = null
+  try {
+    const rootId = getDriveRootFolderId()
+    const driveClients = await getDriveClients()
+
+    for (const drive of driveClients) {
+      try {
+        const fuelFolderId = await ensureFolder(drive, FUEL_FOLDER_NAME, rootId)
+        await upsertJsonFile(drive, fuelFolderId, FUEL_DATA_FILE, currentRecords)
+        await upsertJsonFile(drive, fuelFolderId, FUEL_HISTORY_FILE, history)
+        await upsertJsonFile(drive, fuelFolderId, FUEL_META_FILE, metadata)
+        drivePersisted = true
+        driveError = null
+        break
+      } catch (error) {
+        driveError = describeDriveError(error)
+      }
+    }
+  } catch (error) {
+    driveError = describeDriveError(error)
+  }
+
+  const localDataPersisted = await saveLocalFuelData(currentRecords)
+  const localHistoryPersisted = await saveLocalFuelHistory(history)
+  const localMetadataPersisted = await saveLocalFuelMetadata(metadata)
+  const localPersisted = localDataPersisted && localHistoryPersisted && localMetadataPersisted
+
+  return {
+    drivePersisted,
+    driveError,
+    localPersisted,
+    storage: drivePersisted && localPersisted ? "drive+local" : drivePersisted ? "drive" : "local",
+  }
 }
 
 export async function POST(req: Request) {
   try {
     const session = await verifySession()
     if (!session || session.role !== "mestre") {
-      return NextResponse.json({ error: "Sem permissao" }, { status: 403 })
+      return NextResponse.json({ error: "Sem permissão" }, { status: 403 })
     }
 
     const formData = await req.formData()
     const file = formData.get("file") as File | null
+    const importModeRaw = formData.get("importMode")
+    const importMode = importModeRaw === "monthly" || importModeRaw === "billing" ? importModeRaw : "weekly"
+    const targetMonthRaw = formData.get("targetMonth")
+    const targetMonth =
+      typeof targetMonthRaw === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(targetMonthRaw)
+        ? targetMonthRaw
+        : null
 
     if (!file) {
-      return NextResponse.json({ error: "Arquivo nao enviado." }, { status: 400 })
+      return NextResponse.json({ error: "Arquivo não enviado." }, { status: 400 })
     }
 
     const buffer = Buffer.from(await file.arrayBuffer())
@@ -259,12 +239,14 @@ export async function POST(req: Request) {
       const row = rows[i]
 
       const cardPlate = row[8] || ""
+      const postingDateRaw = row[6] || ""
       const cpfMotorista = row[13] || ""
       const nomeMotorista = row[14] || ""
       const tipoCombustivel = row[26] || ""
       const valor = parseCurrency(row[29] || "")
       const dateTimeRaw = row[5] || ""
       const dateTime = parseDateTimeBr(dateTimeRaw)
+      const postingDate = parseDateTimeBr(postingDateRaw)
 
       if (!cardPlate && !cpfMotorista && !nomeMotorista) continue
       if (!dateTime) continue
@@ -276,31 +258,247 @@ export async function POST(req: Request) {
         tipoCombustivel: tipoCombustivel.trim(),
         valor,
         dateTime,
+        postingDate: postingDate ?? null,
       })
     }
 
-    const drive = await getDriveClient()
-    const rootId = DRIVE_FOLDER_ID as string
-    const fuelFolderId = await ensureFolder(drive, FUEL_FOLDER_NAME, rootId)
+    const importedRecords = dedupeFuelRecords(records)
 
-    const existing = await findFile(drive, FUEL_DATA_FILE, fuelFolderId)
-    const stored = existing?.id ? await readFuelData(drive, existing.id) : []
-    const map = new Map(stored.map((item) => [buildKey(item), item]))
+    let { currentRecords: stored, history, metadata } = await loadFuelStorage()
 
-    for (const record of records) {
-      map.set(buildKey(record), record)
+    const sanitized = sanitizeFuelStorage(stored, history)
+    stored = sanitized.currentRecords
+    history = sanitized.history
+
+    const reconciled = reconcileFuelMonths(stored, history)
+    stored = reconciled.currentRecords
+    history = reconciled.history
+
+    const currentMonthKey = getFuelMonthKey(new Date())
+    const currentMonthRecords: FuelRecord[] = []
+    const archivedImportRecords: FuelRecord[] = []
+    const importedMonths = Array.from(
+      new Set(importedRecords.map((record) => getFuelMonthKey(record.dateTime)).filter((month): month is string => Boolean(month)))
+    ).sort((left, right) => right.localeCompare(left))
+    const monthlyReplacementMonth = importMode === "monthly" ? (targetMonth ?? importedMonths[0] ?? null) : null
+    const importedRecordsByMonth = new Map<string, FuelRecord[]>()
+
+    for (const record of importedRecords) {
+      const monthKey = getFuelMonthKey(record.dateTime)
+      if (!monthKey) continue
+
+      const monthRecords = importedRecordsByMonth.get(monthKey) ?? []
+      monthRecords.push(record)
+      importedRecordsByMonth.set(monthKey, monthRecords)
     }
 
-    const merged = Array.from(map.values())
-      .sort((a, b) => a.dateTime.localeCompare(b.dateTime))
+    if (importMode === "monthly") {
+      if (targetMonthRaw && !targetMonth) {
+        return NextResponse.json(
+          { error: "Competência alvo inválida. Use o formato AAAA-MM." },
+          { status: 400 }
+        )
+      }
 
-    const fileInfo = await saveFuelData(drive, fuelFolderId, merged)
+      if (!targetMonth && importedMonths.length !== 1) {
+        return NextResponse.json(
+          {
+            error:
+              "A importação mensal exige um arquivo com apenas uma competência mensal. Para fechamento com datas cruzadas, selecione a competência antes de importar.",
+          },
+          { status: 400 }
+        )
+      }
+
+      if (currentMonthKey && monthlyReplacementMonth && monthlyReplacementMonth > currentMonthKey) {
+        return NextResponse.json(
+          { error: "Não é possível importar uma competência futura." },
+          { status: 400 }
+        )
+      }
+    }
+
+    if (currentMonthKey && importedMonths.some((month) => month > currentMonthKey)) {
+      return NextResponse.json(
+        { error: "Não é possível importar competências futuras." },
+        { status: 400 }
+      )
+    }
+
+    if (importMode === "billing") {
+      let nextStored = stored
+      let nextHistory = history
+
+      for (const monthKey of importedMonths) {
+        const monthRecords = importedRecordsByMonth.get(monthKey) ?? []
+
+        if (currentMonthKey && monthKey === currentMonthKey) {
+          nextStored = dedupeFuelRecords([
+            ...nextStored.filter((record) => getFuelMonthKey(record.dateTime) !== monthKey),
+            ...monthRecords,
+          ])
+          continue
+        }
+
+        nextHistory = replaceFuelArchiveMonth(nextHistory, monthKey, monthRecords)
+      }
+
+      metadata = { lastImportedAt: new Date().toISOString() }
+
+      const { drivePersisted, driveError, localPersisted, storage } = await persistFuelStorage(nextStored, nextHistory, metadata)
+
+      if (!drivePersisted && !localPersisted) {
+        return NextResponse.json(
+          {
+            error: "Não foi possível salvar a importação nem no Drive nem no armazenamento local. Verifique a configuração do Drive.",
+            driveError,
+          },
+          { status: 500 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        importMode,
+        imported: importedRecords.length,
+        total: nextStored.length,
+        replacedMonths: importedMonths,
+        archivedMonths: importedMonths.filter((month) => !currentMonthKey || month < currentMonthKey),
+        storage,
+      })
+    }
+
+    if (importMode === "monthly" && monthlyReplacementMonth) {
+      let nextStored = stored
+      let nextHistory = history
+
+      if (currentMonthKey && monthlyReplacementMonth === currentMonthKey) {
+        nextStored = dedupeFuelRecords([
+          ...nextStored.filter((record) => getFuelMonthKey(record.dateTime) !== monthlyReplacementMonth),
+          ...importedRecords,
+        ])
+      } else {
+        // Remove duplicatas já presentes no mês atual para evitar dupla contagem entre competências.
+        const importedRecordKeys = new Set(importedRecords.map((record) => buildFuelRecordKey(record)))
+        nextStored = nextStored.filter((record) => !importedRecordKeys.has(buildFuelRecordKey(record)))
+        nextHistory = replaceFuelArchiveMonth(nextHistory, monthlyReplacementMonth, importedRecords)
+      }
+
+      metadata = { lastImportedAt: new Date().toISOString() }
+
+      const { drivePersisted, driveError, localPersisted, storage } = await persistFuelStorage(nextStored, nextHistory, metadata)
+
+      if (!drivePersisted && !localPersisted) {
+        return NextResponse.json(
+          {
+            error: "Não foi possível salvar a importação nem no Drive nem no armazenamento local. Verifique a configuração do Drive.",
+            driveError,
+          },
+          { status: 500 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        importMode,
+        imported: importedRecords.length,
+        total: nextStored.length,
+        replacedMonth: monthlyReplacementMonth,
+        archivedMonths: currentMonthKey && monthlyReplacementMonth < currentMonthKey ? [monthlyReplacementMonth] : [],
+        storage,
+      })
+    }
+
+    for (const record of importedRecords) {
+      const recordMonth = getFuelMonthKey(record.dateTime)
+      if (recordMonth && currentMonthKey && recordMonth < currentMonthKey) {
+        archivedImportRecords.push(record)
+      } else {
+        currentMonthRecords.push(record)
+      }
+    }
+
+    history = archiveFuelRecords(history, archivedImportRecords)
+
+    const merged = dedupeFuelRecords([...stored, ...currentMonthRecords])
+
+    metadata = { lastImportedAt: new Date().toISOString() }
+
+    const { drivePersisted, driveError, localPersisted, storage } = await persistFuelStorage(merged, history, metadata)
+
+    if (!drivePersisted && !localPersisted) {
+      return NextResponse.json(
+        {
+          error: "Não foi possível salvar a importação nem no Drive nem no armazenamento local. Verifique a configuração do Drive.",
+          driveError,
+        },
+        { status: 500 }
+      )
+    }
 
     return NextResponse.json({
       success: true,
-      imported: records.length,
+      importMode,
+      imported: importedRecords.length,
       total: merged.length,
-      file: fileInfo,
+      archivedMonths: Array.from(
+        new Set(
+          archivedImportRecords
+            .map((record) => getFuelMonthKey(record.dateTime))
+            .filter((month): month is string => Boolean(month))
+        )
+      ).sort((left, right) => right.localeCompare(left)),
+      storage,
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Erro desconhecido"
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const session = await verifySession()
+    if (!session || session.role !== "mestre") {
+      return NextResponse.json({ error: "Sem permissão" }, { status: 403 })
+    }
+
+    const url = new URL(req.url)
+    const month = url.searchParams.get("month")
+
+    if (!month) {
+      return NextResponse.json({ error: "Competência não informada." }, { status: 400 })
+    }
+
+    const storedFuel = await loadFuelStorage()
+    let { currentRecords, history } = storedFuel
+    const { metadata } = storedFuel
+
+    const sanitized = sanitizeFuelStorage(currentRecords, history)
+    currentRecords = sanitized.currentRecords
+    history = sanitized.history
+
+    const reconciled = reconcileFuelMonths(currentRecords, history)
+    currentRecords = reconciled.currentRecords
+    history = reconciled.history
+
+    const updated = removeFuelMonthRecords(month, currentRecords, history)
+    const result = await persistFuelStorage(updated.currentRecords, updated.history, metadata)
+
+    if (!result.drivePersisted && !result.localPersisted) {
+      return NextResponse.json(
+        {
+          error: "Não foi possível excluir a competência nem no Drive nem no armazenamento local.",
+          driveError: result.driveError,
+        },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({
+      success: true,
+      removedMonth: month,
+      storage: result.storage,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erro desconhecido"

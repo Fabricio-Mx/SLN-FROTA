@@ -1,91 +1,66 @@
 import { NextResponse } from "next/server"
 import { Readable } from "node:stream"
-import { google } from "googleapis"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { verifySession } from "@/lib/auth"
+import { ensureFolder, getDriveClients, getDriveRootFolderId, type GoogleDriveClient } from "@/lib/google-drive"
+import packageJson from "@/package.json"
 
 export const runtime = "nodejs"
 
-const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
-const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
-const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
-const GOOGLE_OAUTH_REDIRECT_URL = process.env.GOOGLE_OAUTH_REDIRECT_URL
 const BACKUP_FOLDER_NAME = "backups"
 const BACKUP_RETENTION_DAYS = 30
+const DRIVE_REAUTH_CODE = "DRIVE_REAUTH_REQUIRED"
 
-function getOAuthClient() {
-  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !GOOGLE_OAUTH_REDIRECT_URL) {
-    throw new Error("Google OAuth nao configurado.")
+function hasCronAuthorization(req: Request) {
+  const cronSecret = process.env.CRON_SECRET
+  if (!cronSecret) {
+    return false
   }
 
-  return new google.auth.OAuth2(
-    GOOGLE_OAUTH_CLIENT_ID,
-    GOOGLE_OAUTH_CLIENT_SECRET,
-    GOOGLE_OAUTH_REDIRECT_URL
-  )
+  return req.headers.get("authorization") === `Bearer ${cronSecret}`
 }
 
-async function getStoredRefreshToken() {
+function getApplicationMetadata() {
+  return {
+    name: packageJson.name,
+    version: packageJson.version,
+    commitSha: process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || null,
+    generatedFromBranch: process.env.VERCEL_GIT_COMMIT_REF || process.env.GIT_BRANCH || null,
+  }
+}
+
+type DriveRouteError = Error & { code?: string }
+
+async function clearStoredRefreshToken() {
   const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from("drive_tokens")
-    .select("refresh_token")
-    .eq("id", "default")
-    .maybeSingle()
-
-  if (error) {
-    throw new Error("Falha ao carregar token do Drive.")
-  }
-
-  return data?.refresh_token || null
+  await supabase.from("drive_tokens").delete().eq("id", "default")
 }
 
-async function getDriveClient() {
-  if (!DRIVE_FOLDER_ID) {
-    throw new Error("Drive folder id nao configurado.")
+function isInvalidGrantError(error: unknown) {
+  const messages: string[] = []
+
+  if (error instanceof Error && error.message) {
+    messages.push(error.message)
   }
 
-  const refreshToken = await getStoredRefreshToken()
-  if (!refreshToken) {
-    throw new Error("Drive nao autorizado. Acesse /api/drive/oauth/start.")
+  if (typeof error === "object" && error !== null) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === "string") {
+      messages.push(code)
+    }
+
+    const responseData = (error as { response?: { data?: unknown } }).response?.data
+    if (typeof responseData === "string") {
+      messages.push(responseData)
+    } else if (responseData) {
+      messages.push(JSON.stringify(responseData))
+    }
   }
 
-  const auth = getOAuthClient()
-  auth.setCredentials({ refresh_token: refreshToken })
-
-  return google.drive({ version: "v3", auth })
+  return messages.some((message) => message.toLowerCase().includes("invalid_grant"))
 }
 
-async function ensureFolder(drive: ReturnType<typeof google.drive>, name: string, parentId: string) {
-  const q = [
-    "mimeType='application/vnd.google-apps.folder'",
-    `name='${name.replace(/'/g, "\\'")}'`,
-    `'${parentId}' in parents`,
-    "trashed=false",
-  ].join(" and ")
-
-  const list = await drive.files.list({
-    q,
-    fields: "files(id, name)",
-  })
-
-  if (list.data.files && list.data.files.length > 0) {
-    return list.data.files[0].id as string
-  }
-
-  const created = await drive.files.create({
-    requestBody: {
-      name,
-      mimeType: "application/vnd.google-apps.folder",
-      parents: [parentId],
-    },
-    fields: "id",
-  })
-
-  return created.data.id as string
-}
-
-async function listFolders(drive: ReturnType<typeof google.drive>, parentId: string) {
+async function listFolders(drive: GoogleDriveClient, parentId: string) {
   const q = [
     "mimeType='application/vnd.google-apps.folder'",
     `'${parentId}' in parents`,
@@ -100,7 +75,7 @@ async function listFolders(drive: ReturnType<typeof google.drive>, parentId: str
   return list.data.files || []
 }
 
-async function listFiles(drive: ReturnType<typeof google.drive>, parentId: string) {
+async function listFiles(drive: GoogleDriveClient, parentId: string) {
   const q = [
     "mimeType!='application/vnd.google-apps.folder'",
     `'${parentId}' in parents`,
@@ -115,7 +90,7 @@ async function listFiles(drive: ReturnType<typeof google.drive>, parentId: strin
   return list.data.files || []
 }
 
-async function pruneOldBackups(drive: ReturnType<typeof google.drive>, backupRootId: string) {
+async function pruneOldBackups(drive: GoogleDriveClient, backupRootId: string) {
   const cutoff = new Date(Date.now() - BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000)
 
   const years = await listFolders(drive, backupRootId)
@@ -145,29 +120,40 @@ function buildFileName() {
   return `backup_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`
 }
 
-export async function POST() {
-  const session = await verifySession()
-  if (!session || session.role !== "mestre") {
-    return NextResponse.json({ error: "Sem permissao" }, { status: 403 })
+async function getWritableDriveClient() {
+  const rootId = getDriveRootFolderId()
+  const driveClients = await getDriveClients()
+
+  for (const drive of driveClients) {
+    try {
+      await drive.files.get({ fileId: rootId, fields: "id", supportsAllDrives: true })
+      return { drive, rootId }
+    } catch {
+      // Tenta o próximo cliente configurado.
+    }
   }
 
+  const error = new Error("Google Drive precisa ser autorizado novamente.") as DriveRouteError
+  error.code = DRIVE_REAUTH_CODE
+  throw error
+}
+
+async function createBackupFile() {
   try {
     const supabase = createAdminClient()
 
-    const [vehiclesRes, colaboradoresRes, profilesRes, driveTokensRes] = await Promise.all([
+    const [vehiclesRes, colaboradoresRes, profilesRes] = await Promise.all([
       supabase.from("fleet_vehicles").select("*"),
       supabase.from("fleet_colaboradores").select("*"),
       supabase.from("profiles").select("*"),
-      supabase.from("drive_tokens").select("*"),
     ])
 
-    if (vehiclesRes.error || colaboradoresRes.error || profilesRes.error || driveTokensRes.error) {
+    if (vehiclesRes.error || colaboradoresRes.error || profilesRes.error) {
       const message =
         vehiclesRes.error?.message ||
         colaboradoresRes.error?.message ||
-        profilesRes.error?.message ||
-        driveTokensRes.error?.message
-      return NextResponse.json({ error: message || "Falha ao carregar dados." }, { status: 500 })
+        profilesRes.error?.message
+      throw new Error(message || "Falha ao carregar dados.")
     }
 
     const { data: authUsers, error: authUsersError } = await supabase.auth.admin.listUsers({
@@ -176,15 +162,15 @@ export async function POST() {
     })
 
     if (authUsersError) {
-      return NextResponse.json({ error: authUsersError.message }, { status: 500 })
+      throw new Error(authUsersError.message)
     }
 
     const payload = {
       generatedAt: new Date().toISOString(),
+      application: getApplicationMetadata(),
       vehicles: vehiclesRes.data || [],
       colaboradores: colaboradoresRes.data || [],
       profiles: profilesRes.data || [],
-      driveTokens: driveTokensRes.data || [],
       authUsers: (authUsers?.users || []).map((user) => ({
         id: user.id,
         email: user.email,
@@ -193,8 +179,7 @@ export async function POST() {
       })),
     }
 
-    const drive = await getDriveClient()
-    const rootId = DRIVE_FOLDER_ID as string
+    const { drive, rootId } = await getWritableDriveClient()
     const backupRootId = await ensureFolder(drive, BACKUP_FOLDER_NAME, rootId)
 
     const now = new Date()
@@ -223,9 +208,61 @@ export async function POST() {
       // Ignore cleanup failures to avoid blocking backup.
     }
 
-    return NextResponse.json({ success: true, file: created.data })
+    return created.data
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Erro desconhecido"
-    return NextResponse.json({ error: message }, { status: 500 })
+    if (isInvalidGrantError(err)) {
+      await clearStoredRefreshToken()
+      const error = new Error("Google Drive precisa ser autorizado novamente.") as DriveRouteError
+      error.code = DRIVE_REAUTH_CODE
+      throw error
+    }
+
+    if (typeof err === "object" && err !== null && "code" in err && (err as DriveRouteError).code === DRIVE_REAUTH_CODE) {
+      throw err
+    }
+
+    throw err
+  }
+}
+
+function toBackupErrorResponse(err: unknown) {
+  if (typeof err === "object" && err !== null && "code" in err && (err as DriveRouteError).code === DRIVE_REAUTH_CODE) {
+    return NextResponse.json(
+      {
+        error: err instanceof Error ? err.message : "Google Drive precisa ser autorizado novamente.",
+        code: DRIVE_REAUTH_CODE,
+      },
+      { status: 409 }
+    )
+  }
+
+  const message = err instanceof Error ? err.message : "Erro desconhecido"
+  return NextResponse.json({ error: message }, { status: 500 })
+}
+
+export async function GET(req: Request) {
+  if (!hasCronAuthorization(req)) {
+    return NextResponse.json({ error: "Nao autorizado para execucao automatica." }, { status: 401 })
+  }
+
+  try {
+    const file = await createBackupFile()
+    return NextResponse.json({ success: true, file, triggeredBy: "cron" })
+  } catch (err) {
+    return toBackupErrorResponse(err)
+  }
+}
+
+export async function POST() {
+  const session = await verifySession()
+  if (!session || session.role !== "mestre") {
+    return NextResponse.json({ error: "Sem permissao" }, { status: 403 })
+  }
+
+  try {
+    const file = await createBackupFile()
+    return NextResponse.json({ success: true, file, triggeredBy: "manual" })
+  } catch (err) {
+    return toBackupErrorResponse(err)
   }
 }

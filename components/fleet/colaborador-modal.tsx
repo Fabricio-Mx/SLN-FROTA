@@ -1,5 +1,6 @@
 "use client"
 
+import { ExternalLink } from "lucide-react"
 import { useEffect, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -20,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/hooks/use-toast"
-import type { Colaborador, ColaboradorFormData, ColaboradorChecklist, DriveFile, Vehicle } from "@/lib/types"
+import type { Colaborador, ColaboradorFormData, DriveFile, Vehicle } from "@/lib/types"
 
 interface ColaboradorModalProps {
   open: boolean
@@ -34,16 +35,14 @@ const initialFormData: ColaboradorFormData = {
   nome: "",
   cpf: "",
   telefone: "",
+  email: "",
   departamento: "",
+  centroCusto: "",
+  cep: "",
+  endereco: "",
   dataVencimentoCNH: "",
   documentos: [],
-  checklist: {
-    frontal: undefined,
-    direita: undefined,
-    esquerda: undefined,
-    traseira: undefined,
-    avarias: [],
-  },
+  imagensVeiculo: [],
 }
 
 export function ColaboradorModal({
@@ -58,17 +57,14 @@ export function ColaboradorModal({
   const [selectedVeiculoKm, setSelectedVeiculoKm] = useState<string>("")
   const [errors, setErrors] = useState<Partial<Record<keyof ColaboradorFormData, string>>>({})
   const [uploadingDocs, setUploadingDocs] = useState(false)
-  const [uploadingChecklist, setUploadingChecklist] = useState(false)
-  const [checklistError, setChecklistError] = useState<string | null>(null)
+  const [uploadingVehicleImages, setUploadingVehicleImages] = useState(false)
 
-  // Veículos disponíveis (sem colaborador atribuído) ou o veículo atual do colaborador
-  const availableVehicles = vehicles.filter((v) => {
+  const availableVehicles = vehicles.filter((vehicle) => {
     if (colaborador) {
-      // Se editando, mostrar veículos disponíveis + veículo atual do colaborador
-      return !v.colaboradorId || v.colaboradorId === colaborador.id
+      return !vehicle.colaboradorId || vehicle.colaboradorId === colaborador.id
     }
-    // Se criando, mostrar apenas veículos disponíveis
-    return !v.colaboradorId
+
+    return !vehicle.colaboradorId
   })
 
   useEffect(() => {
@@ -77,25 +73,29 @@ export function ColaboradorModal({
         nome: colaborador.nome || "",
         cpf: colaborador.cpf || "",
         telefone: colaborador.telefone || "",
+        email: colaborador.email || "",
         departamento: colaborador.departamento || "",
+        centroCusto: colaborador.centroCusto || "",
+        cep: "",
+        endereco: "",
         dataVencimentoCNH: colaborador.dataVencimentoCNH || "",
         documentos: colaborador.documentos || [],
-        checklist: colaborador.checklist || initialFormData.checklist,
+        imagensVeiculo: colaborador.imagensVeiculo || [],
       })
-      // Buscar veículo atual do colaborador
-      const currentVehicle = vehicles.find((v) => v.colaboradorId === colaborador.id)
+
+      const currentVehicle = vehicles.find((vehicle) => vehicle.colaboradorId === colaborador.id)
       setSelectedVeiculoId(currentVehicle?.id || null)
     } else {
       setFormData(initialFormData)
       setSelectedVeiculoId(null)
     }
+
     setSelectedVeiculoKm("")
     setErrors({})
-    setChecklistError(null)
   }, [colaborador, open, vehicles])
 
   const documentos = formData.documentos || []
-  const checklist = formData.checklist || initialFormData.checklist
+  const imagensVeiculo = formData.imagensVeiculo || []
 
   const formatCPF = (value: string) => {
     const numbers = value.replace(/\D/g, "")
@@ -114,6 +114,7 @@ export function ColaboradorModal({
         .replace(/(\d{4})(\d)/, "$1-$2")
         .replace(/(-\d{4})\d+?$/, "$1")
     }
+
     return numbers
       .replace(/(\d{2})(\d)/, "($1) $2")
       .replace(/(\d{5})(\d)/, "$1-$2")
@@ -122,10 +123,13 @@ export function ColaboradorModal({
 
   const formatDateBr = (value: string) => {
     if (!value) return ""
+
     const [year, month, day] = value.split("-")
     if (year && month && day) return `${day}/${month}/${year}`
+
     const parsed = new Date(value)
     if (Number.isNaN(parsed.getTime())) return ""
+
     return parsed.toLocaleDateString("pt-BR")
   }
 
@@ -137,8 +141,12 @@ export function ColaboradorModal({
       .replace(/^_+|_+$/g, "")
   }
 
+  const isValidEmail = (value: string) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+  }
+
   const selectedVehicle = selectedVeiculoId
-    ? vehicles.find((v) => v.id === selectedVeiculoId) || null
+    ? vehicles.find((vehicle) => vehicle.id === selectedVeiculoId) || null
     : null
 
   useEffect(() => {
@@ -160,7 +168,7 @@ export function ColaboradorModal({
     if (!selectedVehicle) {
       toast({
         title: "Aviso",
-        description: "Selecione um veiculo para gerar o termo.",
+        description: "Selecione um veículo para gerar o termo.",
       })
       return
     }
@@ -176,7 +184,7 @@ export function ColaboradorModal({
     if (!payload.name || !payload.inumber || !payload.date || !payload.md || !payload.plc) {
       toast({
         title: "Aviso",
-        description: "Preencha os dados do colaborador e selecione o veiculo.",
+        description: "Preencha os dados do colaborador e selecione o veículo.",
       })
       return
     }
@@ -184,66 +192,17 @@ export function ColaboradorModal({
     try {
       const url = `/api/termo?name=${encodeURIComponent(payload.name)}&inumber=${encodeURIComponent(payload.inumber)}&date=${encodeURIComponent(payload.date)}&md=${encodeURIComponent(payload.md)}&plc=${encodeURIComponent(payload.plc)}`
       window.open(url, "_blank")
-      
       toast({ title: "Sucesso", description: "Termo aberto em nova guia." })
     } catch {
       toast({
         title: "Erro",
-        description: "Nao foi possivel abrir o termo.",
+        description: "Não foi possível abrir o termo.",
         variant: "destructive",
       })
     }
   }
 
-  const handleUploadDocumentos = async (files: FileList | null) => {
-    if (!files || files.length === 0) return
-    if (!formData.cpf.trim()) {
-      toast({
-        title: "Aviso",
-        description: "Informe o CPF antes de enviar documentos.",
-      })
-      return
-    }
-    setUploadingDocs(true)
-
-    try {
-      const uploaded = [...documentos]
-
-      for (const file of Array.from(files)) {
-        const body = new FormData()
-        body.append("file", file)
-        body.append("entityType", "colaboradores")
-        body.append("entityId", sanitizeFileName(formData.cpf || "sem-cpf"))
-        body.append("label", "documento")
-
-        const res = await fetch("/api/drive/upload", {
-          method: "POST",
-          body,
-        })
-
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}))
-          throw new Error(data?.error || "Falha ao enviar arquivo.")
-        }
-
-        const data = await res.json()
-        uploaded.push(data)
-      }
-
-      setFormData({ ...formData, documentos: uploaded })
-      toast({ title: "Sucesso", description: "Documentos enviados para o Drive." })
-    } catch (error) {
-      toast({
-        title: "Erro",
-        description: error instanceof Error ? error.message : "Falha ao enviar documentos.",
-        variant: "destructive",
-      })
-    } finally {
-      setUploadingDocs(false)
-    }
-  }
-
-  const uploadChecklistFile = async (file: File, label: string): Promise<DriveFile> => {
+  const uploadDriveFile = async (file: File, label: string): Promise<DriveFile> => {
     const body = new FormData()
     body.append("file", file)
     body.append("entityType", "colaboradores")
@@ -263,40 +222,43 @@ export function ColaboradorModal({
     return res.json()
   }
 
-  const handleChecklistImageChange = async (file: File | null, position: keyof ColaboradorChecklist) => {
-    if (!file) return
+  const handleUploadDocumentos = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+
     if (!formData.cpf.trim()) {
       toast({
         title: "Aviso",
-        description: "Informe o CPF antes de enviar imagens.",
+        description: "Informe o CPF antes de enviar documentos.",
       })
       return
     }
 
-    setUploadingChecklist(true)
+    setUploadingDocs(true)
+
     try {
-      const uploaded = await uploadChecklistFile(file, `checklist_${position}`)
-      setFormData({
-        ...formData,
-        checklist: {
-          ...checklist,
-          [position]: uploaded,
-        },
-      })
-      toast({ title: "Sucesso", description: "Imagem enviada para o Drive." })
+      const uploaded = [...documentos]
+
+      for (const file of Array.from(files)) {
+        const data = await uploadDriveFile(file, "documento")
+        uploaded.push(data)
+      }
+
+      setFormData((current) => ({ ...current, documentos: uploaded }))
+      toast({ title: "Sucesso", description: "Documentos enviados para o Drive." })
     } catch (error) {
       toast({
         title: "Erro",
-        description: error instanceof Error ? error.message : "Falha ao enviar imagem.",
+        description: error instanceof Error ? error.message : "Falha ao enviar documentos.",
         variant: "destructive",
       })
     } finally {
-      setUploadingChecklist(false)
+      setUploadingDocs(false)
     }
   }
 
-  const handleAvariaUpload = async (files: FileList | null) => {
+  const handleUploadVehicleImages = async (files: FileList | null) => {
     if (!files || files.length === 0) return
+
     if (!formData.cpf.trim()) {
       toast({
         title: "Aviso",
@@ -305,61 +267,42 @@ export function ColaboradorModal({
       return
     }
 
-    const current = checklist.avarias || []
-    const remaining = 3 - current.length
+    const current = [...imagensVeiculo]
+    const remaining = 2 - current.length
+
     if (remaining <= 0) {
       toast({
         title: "Aviso",
-        description: "Limite de 3 imagens de avaria atingido.",
+        description: "Limite de 2 imagens do veículo atingido.",
       })
       return
     }
 
-    const toUpload = Array.from(files).slice(0, remaining)
-    setUploadingChecklist(true)
+    setUploadingVehicleImages(true)
+
     try {
       const uploaded = [...current]
-      for (const file of toUpload) {
-        const fileData = await uploadChecklistFile(file, "avaria")
-        uploaded.push({ file: fileData, descricao: "" })
+
+      for (const file of Array.from(files).slice(0, remaining)) {
+        const data = await uploadDriveFile(file, `registro_veiculo_${uploaded.length + 1}`)
+        uploaded.push(data)
       }
 
-      setFormData({
-        ...formData,
-        checklist: {
-          ...checklist,
-          avarias: uploaded,
-        },
-      })
-      toast({ title: "Sucesso", description: "Imagens de avaria enviadas." })
+      setFormData((currentFormData) => ({ ...currentFormData, imagensVeiculo: uploaded }))
+      toast({ title: "Sucesso", description: "Imagens do veículo enviadas para o Drive." })
     } catch (error) {
       toast({
         title: "Erro",
-        description: error instanceof Error ? error.message : "Falha ao enviar avaria.",
+        description: error instanceof Error ? error.message : "Falha ao enviar imagens.",
         variant: "destructive",
       })
     } finally {
-      setUploadingChecklist(false)
+      setUploadingVehicleImages(false)
     }
-  }
-
-  const handleAvariaDescricaoChange = (index: number, value: string) => {
-    const avarias = [...(checklist.avarias || [])]
-    const current = avarias[index]
-    if (!current) return
-    avarias[index] = { ...current, descricao: value }
-    setFormData({
-      ...formData,
-      checklist: {
-        ...checklist,
-        avarias,
-      },
-    })
   }
 
   const validateForm = (): boolean => {
     const newErrors: Partial<Record<keyof ColaboradorFormData, string>> = {}
-    let checklistMessage: string | null = null
 
     if (!formData.nome.trim()) {
       newErrors.nome = "Nome é obrigatório"
@@ -379,6 +322,12 @@ export function ColaboradorModal({
       newErrors.telefone = "Telefone inválido"
     }
 
+    if (!formData.email.trim()) {
+      newErrors.email = "E-mail é obrigatório"
+    } else if (!isValidEmail(formData.email.trim())) {
+      newErrors.email = "E-mail inválido"
+    }
+
     if (!formData.departamento.trim()) {
       newErrors.departamento = "Departamento é obrigatório"
     }
@@ -387,29 +336,31 @@ export function ColaboradorModal({
       newErrors.dataVencimentoCNH = "Data de vencimento da CNH é obrigatória"
     }
 
-    if (!checklist.frontal || !checklist.direita || !checklist.esquerda || !checklist.traseira) {
-      checklistMessage = "Envie as 4 imagens obrigatorias do veiculo."
-    } else if ((checklist.avarias || []).some((item) => !item.descricao.trim())) {
-      checklistMessage = "Informe a descricao para cada avaria enviada."
-    }
-
     setErrors(newErrors)
-    setChecklistError(checklistMessage)
-    return Object.keys(newErrors).length === 0 && !checklistMessage
+    return Object.keys(newErrors).length === 0
   }
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
+
     if (validateForm()) {
       const kmValue = selectedVeiculoKm.trim() === "" ? null : Number(selectedVeiculoKm)
-      onSave(formData, selectedVeiculoId, Number.isNaN(kmValue) ? null : kmValue)
+      onSave(
+        {
+          ...formData,
+          cep: "",
+          endereco: "",
+        },
+        selectedVeiculoId,
+        Number.isNaN(kmValue) ? null : kmValue,
+      )
       onOpenChange(false)
     }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px] max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>
             {colaborador ? "Editar Colaborador" : "Adicionar Colaborador"}
@@ -428,29 +379,23 @@ export function ColaboradorModal({
                 id="nome"
                 placeholder="João da Silva"
                 value={formData.nome}
-                onChange={(e) =>
-                  setFormData({ ...formData, nome: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, nome: e.target.value })}
               />
-              {errors.nome && (
-                <p className="text-sm text-destructive">{errors.nome}</p>
-              )}
+              {errors.nome ? <p className="text-sm text-destructive">{errors.nome}</p> : null}
             </div>
+
             <div className="grid gap-2">
               <Label htmlFor="cpf">CPF</Label>
               <Input
                 id="cpf"
                 placeholder="000.000.000-00"
                 value={formData.cpf}
-                onChange={(e) =>
-                  setFormData({ ...formData, cpf: formatCPF(e.target.value) })
-                }
+                onChange={(e) => setFormData({ ...formData, cpf: formatCPF(e.target.value) })}
                 maxLength={14}
               />
-              {errors.cpf && (
-                <p className="text-sm text-destructive">{errors.cpf}</p>
-              )}
+              {errors.cpf ? <p className="text-sm text-destructive">{errors.cpf}</p> : null}
             </div>
+
             <div className="grid gap-2">
               <Label htmlFor="telefone">Telefone</Label>
               <Input
@@ -458,43 +403,56 @@ export function ColaboradorModal({
                 type="tel"
                 placeholder="(00) 00000-0000"
                 value={formData.telefone}
-                onChange={(e) =>
-                  setFormData({ ...formData, telefone: formatTelefone(e.target.value) })
-                }
+                onChange={(e) => setFormData({ ...formData, telefone: formatTelefone(e.target.value) })}
                 maxLength={15}
               />
-              {errors.telefone && (
-                <p className="text-sm text-destructive">{errors.telefone}</p>
-              )}
+              {errors.telefone ? <p className="text-sm text-destructive">{errors.telefone}</p> : null}
             </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="email">E-mail</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="colaborador@empresa.com"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              />
+              {errors.email ? <p className="text-sm text-destructive">{errors.email}</p> : null}
+            </div>
+
             <div className="grid gap-2">
               <Label htmlFor="departamento">Departamento</Label>
               <Input
                 id="departamento"
                 placeholder="Comercial, Operações, etc."
                 value={formData.departamento}
-                onChange={(e) =>
-                  setFormData({ ...formData, departamento: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, departamento: e.target.value })}
               />
-              {errors.departamento && (
-                <p className="text-sm text-destructive">{errors.departamento}</p>
-              )}
+              {errors.departamento ? <p className="text-sm text-destructive">{errors.departamento}</p> : null}
             </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="centroCusto">Centro de Custo</Label>
+              <Input
+                id="centroCusto"
+                placeholder="Ex: 101 - Operação"
+                value={formData.centroCusto}
+                onChange={(e) => setFormData({ ...formData, centroCusto: e.target.value })}
+              />
+            </div>
+
             <div className="grid gap-2">
               <Label htmlFor="dataVencimentoCNH">Data de Vencimento da CNH</Label>
               <Input
                 id="dataVencimentoCNH"
                 type="date"
                 value={formData.dataVencimentoCNH}
-                onChange={(e) =>
-                  setFormData({ ...formData, dataVencimentoCNH: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, dataVencimentoCNH: e.target.value })}
               />
-              {errors.dataVencimentoCNH && (
-                <p className="text-sm text-destructive">{errors.dataVencimentoCNH}</p>
-              )}
+              {errors.dataVencimentoCNH ? <p className="text-sm text-destructive">{errors.dataVencimentoCNH}</p> : null}
             </div>
+
             <div className="grid gap-2">
               <Label htmlFor="documentos">Documentos (CNH/CPF/Termo)</Label>
               <Input
@@ -505,7 +463,7 @@ export function ColaboradorModal({
                 onChange={(e) => handleUploadDocumentos(e.target.files)}
                 disabled={uploadingDocs}
               />
-              {documentos.length > 0 && (
+              {documentos.length > 0 ? (
                 <div className="flex flex-wrap gap-2 text-xs">
                   {documentos.map((doc) => (
                     <a
@@ -519,18 +477,17 @@ export function ColaboradorModal({
                     </a>
                   ))}
                 </div>
-              )}
+              ) : null}
               <p className="text-xs text-muted-foreground">
                 {uploadingDocs ? "Enviando arquivos..." : "Arquivos vao para o Drive da empresa."}
               </p>
             </div>
+
             <div className="grid gap-2">
               <Label htmlFor="veiculo">Veículo (Placa)</Label>
               <Select
                 value={selectedVeiculoId || "none"}
-                onValueChange={(value) =>
-                  setSelectedVeiculoId(value === "none" ? null : value)
-                }
+                onValueChange={(value) => setSelectedVeiculoId(value === "none" ? null : value)}
               >
                 <SelectTrigger id="veiculo">
                   <SelectValue placeholder="Selecione um veículo" />
@@ -545,11 +502,12 @@ export function ColaboradorModal({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {availableVehicles.length === 0 
-                  ? "Nenhum veículo disponível" 
+                {availableVehicles.length === 0
+                  ? "Nenhum veículo disponível"
                   : `${availableVehicles.length} veículo(s) disponível(is)`}
               </p>
             </div>
+
             <div className="grid gap-2">
               <Label htmlFor="veiculoKm">KM do Veículo</Label>
               <Input
@@ -567,107 +525,57 @@ export function ColaboradorModal({
                 {selectedVeiculoId ? "Atualize o KM do veículo selecionado." : "Selecione um veículo para editar o KM."}
               </p>
             </div>
+
             <div className="grid gap-3">
-              <div className="flex items-center justify-between">
-                <Label>Checklist do Veiculo (4 imagens obrigatorias)</Label>
-                <span className="text-xs text-muted-foreground">Max 3 avarias</span>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-2">
-                  <Label htmlFor="checklistFrontal">Imagem Frontal</Label>
-                  <Input
-                    id="checklistFrontal"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleChecklistImageChange(e.target.files?.[0] || null, "frontal")}
-                    disabled={uploadingChecklist}
-                  />
+              <Label htmlFor="checklistVex">Checklist do Veículo</Label>
+              <Button type="button" variant="outline" className="justify-start gap-2 bg-transparent" asChild>
+                <a id="checklistVex" href="https://app.vexsoft.com.br/login.php?returnUrl=/" target="_blank" rel="noreferrer">
+                  Acessar checklist na Vexsoft
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                A vistoria do veículo é feita diretamente na Vexsoft.
+              </p>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="imagensVeiculo">Imagens do Veículo (opcional)</Label>
+              <Input
+                id="imagensVeiculo"
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => handleUploadVehicleImages(e.target.files)}
+                disabled={uploadingVehicleImages}
+              />
+              {imagensVeiculo.length > 0 ? (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {imagensVeiculo.map((imagem) => (
+                    <a
+                      key={imagem.id}
+                      href={imagem.webViewLink || "#"}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded bg-muted px-2 py-1 text-muted-foreground hover:text-foreground"
+                    >
+                      {imagem.name}
+                    </a>
+                  ))}
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="checklistDireita">Imagem Lado Direito</Label>
-                  <Input
-                    id="checklistDireita"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleChecklistImageChange(e.target.files?.[0] || null, "direita")}
-                    disabled={uploadingChecklist}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="checklistEsquerda">Imagem Lado Esquerdo</Label>
-                  <Input
-                    id="checklistEsquerda"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleChecklistImageChange(e.target.files?.[0] || null, "esquerda")}
-                    disabled={uploadingChecklist}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="checklistTraseira">Imagem Traseira</Label>
-                  <Input
-                    id="checklistTraseira"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleChecklistImageChange(e.target.files?.[0] || null, "traseira")}
-                    disabled={uploadingChecklist}
-                  />
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="avarias">Imagem de Avaria (ate 3)</Label>
-                <Input
-                  id="avarias"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={(e) => handleAvariaUpload(e.target.files)}
-                  disabled={uploadingChecklist}
-                />
-                {(checklist.avarias || []).length > 0 && (
-                  <div className="grid gap-3">
-                    {(checklist.avarias || []).map((avaria, index) => (
-                      <div key={avaria.file.id} className="grid gap-2 rounded border border-border p-2">
-                        <a
-                          href={avaria.file.webViewLink || "#"}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs text-primary"
-                        >
-                          {avaria.file.name}
-                        </a>
-                        <Input
-                          placeholder="Descreva a avaria"
-                          value={avaria.descricao}
-                          onChange={(e) => handleAvariaDescricaoChange(index, e.target.value)}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  {uploadingChecklist ? "Enviando checklist..." : "As 4 imagens sao obrigatorias para salvar."}
-                </p>
-                {checklistError && (
-                  <p className="text-sm text-destructive">{checklistError}</p>
-                )}
-              </div>
+              ) : null}
+              <p className="text-xs text-muted-foreground">
+                {uploadingVehicleImages
+                  ? "Enviando imagens..."
+                  : `Você pode enviar até 2 imagens do veículo para registro. ${imagensVeiculo.length}/2 anexada(s).`}
+              </p>
             </div>
           </div>
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleGenerateTermo}
-              disabled={!canGenerateTermo}
-            >
+            <Button type="button" variant="outline" onClick={handleGenerateTermo} disabled={!canGenerateTermo}>
               Gerar Termo
             </Button>
             <Button type="submit">

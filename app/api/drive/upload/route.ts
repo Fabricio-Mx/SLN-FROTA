@@ -5,6 +5,15 @@ import { createAdminClient } from "@/lib/supabase/admin"
 
 export const runtime = "nodejs"
 
+const DRIVE_LIST_OPTIONS = {
+  supportsAllDrives: true,
+  includeItemsFromAllDrives: true,
+} as const
+
+const DRIVE_WRITE_OPTIONS = {
+  supportsAllDrives: true,
+} as const
+
 const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
 const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
 const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
@@ -64,6 +73,7 @@ async function ensureFolder(drive: ReturnType<typeof google.drive>, name: string
   const list = await drive.files.list({
     q,
     fields: "files(id, name)",
+    ...DRIVE_LIST_OPTIONS,
   })
 
   if (list.data.files && list.data.files.length > 0) {
@@ -77,6 +87,7 @@ async function ensureFolder(drive: ReturnType<typeof google.drive>, name: string
       parents: [parentId],
     },
     fields: "id",
+    ...DRIVE_WRITE_OPTIONS,
   })
 
   return created.data.id as string
@@ -124,6 +135,7 @@ export async function POST(req: Request) {
         body: stream,
       },
       fields: "id, name, webViewLink, webContentLink, mimeType, size",
+      ...DRIVE_WRITE_OPTIONS,
     })
 
     return NextResponse.json(created.data)

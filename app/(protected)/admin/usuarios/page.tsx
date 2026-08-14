@@ -1,12 +1,13 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -45,12 +46,13 @@ import {
 } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import type { UserRole, AppUser } from "@/lib/types"
-import { ROLE_LABELS, ROLE_DESCRIPTIONS } from "@/lib/auth-shared"
+import { ROLE_LABELS, ROLE_DESCRIPTIONS, USER_ROLES } from "@/lib/auth-shared"
 
 interface Profile {
   id: string
   email: string
   nome: string | null
+  avatar_url?: string | null
   role: string
   is_admin: boolean
   created_at: string
@@ -69,6 +71,10 @@ const ROLE_STYLES: Record<UserRole, { icon: React.ReactNode; color: string }> = 
     icon: <Briefcase className="h-3.5 w-3.5" />,
     color: "bg-green-100 text-green-800 border-green-200",
   },
+  administrativo_rh: {
+    icon: <Users className="h-3.5 w-3.5" />,
+    color: "bg-cyan-100 text-cyan-800 border-cyan-200",
+  },
   logistico: {
     icon: <TruckIcon className="h-3.5 w-3.5" />,
     color: "bg-purple-100 text-purple-800 border-purple-200",
@@ -81,18 +87,17 @@ export default function AdminUsuariosPage() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false)
+  const [uploadingAvatarForUserId, setUploadingAvatarForUserId] = useState<string | null>(null)
   const [newUser, setNewUser] = useState({
     email: "",
     password: "",
     nome: "",
     role: "consulta" as UserRole,
   })
+  const [newUserAvatarFile, setNewUserAvatarFile] = useState<File | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const router = useRouter()
-
-  useEffect(() => {
-    checkAccessAndLoad()
-  }, [])
 
   const formatApiError = (data: { error?: string; hint?: string } | null) => {
     if (!data) return "Erro ao carregar."
@@ -100,7 +105,7 @@ export default function AdminUsuariosPage() {
     return data.error || "Erro ao carregar."
   }
 
-  const checkAccessAndLoad = async () => {
+  const checkAccessAndLoad = useCallback(async () => {
     try {
       // Verificar se é mestre
       const { getCurrentUser } = await import("@/app/actions/auth")
@@ -140,7 +145,11 @@ export default function AdminUsuariosPage() {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [router])
+
+  useEffect(() => {
+    checkAccessAndLoad()
+  }, [checkAccessAndLoad])
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {}
@@ -150,6 +159,30 @@ export default function AdminUsuariosPage() {
     if (newUser.password.length < 6) newErrors.password = "Mínimo 6 caracteres"
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
+  }
+
+  const getInitials = (name: string | null | undefined, email: string) => {
+    const base = (name || email || "U").trim()
+    return base.charAt(0).toUpperCase()
+  }
+
+  const uploadAvatar = async (userId: string, file: File) => {
+    const body = new FormData()
+    body.append("userId", userId)
+    body.append("file", file)
+
+    const res = await fetch("/api/auth/users/avatar", {
+      method: "POST",
+      body,
+    })
+
+    const data = await res.json().catch(() => null)
+
+    if (!res.ok) {
+      throw new Error(formatApiError(data))
+    }
+
+    return data?.avatarUrl as string
   }
 
   const handleCreateUser = async (e: React.FormEvent) => {
@@ -171,15 +204,49 @@ export default function AdminUsuariosPage() {
         return
       }
 
-      toast({ title: "Sucesso", description: "Usuário criado com sucesso!" })
+      if (newUserAvatarFile && data?.userId) {
+        setIsUploadingAvatar(true)
+        await uploadAvatar(data.userId, newUserAvatarFile)
+      }
+
+      toast({ title: "Sucesso", description: data?.message || "Usuário criado com sucesso!" })
       setIsModalOpen(false)
       setNewUser({ email: "", password: "", nome: "", role: "consulta" })
+      setNewUserAvatarFile(null)
       setErrors({})
       checkAccessAndLoad()
-    } catch {
-      toast({ title: "Erro", description: "Erro ao criar usuário.", variant: "destructive" })
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Erro ao criar usuário.",
+        variant: "destructive",
+      })
     } finally {
+      setIsUploadingAvatar(false)
       setIsCreating(false)
+    }
+  }
+
+  const handleAvatarChange = async (userId: string, file: File | null) => {
+    if (!file) return
+
+    setUploadingAvatarForUserId(userId)
+    try {
+      const avatarUrl = await uploadAvatar(userId, file)
+      setProfiles((current) => current.map((profile) => (
+        profile.id === userId
+          ? { ...profile, avatar_url: `${avatarUrl}?v=${Date.now()}` }
+          : profile
+      )))
+      toast({ title: "Sucesso", description: "Foto atualizada com sucesso!" })
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Não foi possível enviar a foto.",
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingAvatarForUserId(null)
     }
   }
 
@@ -271,8 +338,8 @@ export default function AdminUsuariosPage() {
       {/* Content */}
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
         {/* Legenda dos tipos */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {(["mestre", "consulta", "administrativo", "logistico"] as UserRole[]).map((role) => {
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {USER_ROLES.map((role) => {
             const style = ROLE_STYLES[role]
             return (
               <div key={role} className="bg-card border border-border rounded-lg p-4 flex items-start gap-3">
@@ -302,16 +369,17 @@ export default function AdminUsuariosPage() {
                 <UserCircle className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" />
                 <p className="text-muted-foreground font-medium">Nenhum usuário cadastrado</p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Clique em "Novo Usuário" para cadastrar o primeiro acesso.
+                  Clique em &quot;Novo Usuário&quot; para cadastrar o primeiro acesso.
                 </p>
               </div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow className="bg-muted/50">
-                    <TableHead className="font-semibold">Nome</TableHead>
+                    <TableHead className="font-semibold">Usuário</TableHead>
                     <TableHead className="font-semibold">Email</TableHead>
                     <TableHead className="font-semibold">Tipo de Acesso</TableHead>
+                    <TableHead className="font-semibold">Foto</TableHead>
                     <TableHead className="font-semibold">Criado em</TableHead>
                     <TableHead className="w-[60px]" />
                   </TableRow>
@@ -322,7 +390,20 @@ export default function AdminUsuariosPage() {
                     const style = ROLE_STYLES[role] || ROLE_STYLES.consulta
                     return (
                       <TableRow key={profile.id}>
-                        <TableCell className="font-medium">{profile.nome || "-"}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-10 w-10 ring-2 ring-[#dbe8cf]">
+                              <AvatarImage src={profile.avatar_url || undefined} alt={profile.nome || profile.email} className="object-cover" />
+                              <AvatarFallback className="bg-[#7CB342] font-semibold text-white">
+                                {getInitials(profile.nome, profile.email)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium text-foreground">{profile.nome || "-"}</p>
+                              <p className="text-xs text-muted-foreground">ID: {profile.id.slice(0, 8)}</p>
+                            </div>
+                          </div>
+                        </TableCell>
                         <TableCell className="text-muted-foreground">{profile.email}</TableCell>
                         <TableCell>
                           <Select
@@ -340,7 +421,7 @@ export default function AdminUsuariosPage() {
                               </SelectValue>
                             </SelectTrigger>
                             <SelectContent>
-                              {(["mestre", "consulta", "administrativo", "logistico"] as UserRole[]).map(
+                              {USER_ROLES.map(
                                 (r) => (
                                   <SelectItem key={r} value={r}>
                                     <div className="flex items-center gap-2">
@@ -352,6 +433,25 @@ export default function AdminUsuariosPage() {
                               )}
                             </SelectContent>
                           </Select>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              id={`avatar-file-${profile.id}`}
+                              type="file"
+                              accept="image/*"
+                              className="max-w-[220px]"
+                              onChange={(event) => {
+                                const file = event.target.files?.[0] || null
+                                handleAvatarChange(profile.id, file)
+                                event.currentTarget.value = ""
+                              }}
+                              disabled={uploadingAvatarForUserId === profile.id}
+                            />
+                            {uploadingAvatarForUserId === profile.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-[#7CB342]" />
+                            ) : null}
+                          </div>
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           {new Date(profile.created_at).toLocaleDateString("pt-BR")}
@@ -427,6 +527,20 @@ export default function AdminUsuariosPage() {
               />
               {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="avatar-file" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Foto do Usuário
+              </Label>
+              <Input
+                id="avatar-file"
+                type="file"
+                accept="image/*"
+                onChange={(e) => setNewUserAvatarFile(e.target.files?.[0] || null)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Selecione uma imagem do computador. PNG, JPG, WEBP e GIF até 5 MB.
+              </p>
+            </div>
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Tipo de Acesso
@@ -439,7 +553,7 @@ export default function AdminUsuariosPage() {
                   <SelectValue className="block max-w-full truncate" placeholder="Selecione o tipo de acesso" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(["mestre", "consulta", "administrativo", "logistico"] as UserRole[]).map((r) => (
+                  {USER_ROLES.map((r) => (
                     <SelectItem key={r} value={r}>
                       <div className="flex items-center gap-2">
                         {ROLE_STYLES[r].icon}
@@ -458,6 +572,7 @@ export default function AdminUsuariosPage() {
                 className="flex-1 bg-transparent"
                 onClick={() => {
                   setIsModalOpen(false)
+                  setNewUserAvatarFile(null)
                   setErrors({})
                 }}
               >
@@ -466,12 +581,12 @@ export default function AdminUsuariosPage() {
               <Button
                 type="submit"
                 className="flex-1 bg-[#7CB342] hover:bg-[#689F38] text-white"
-                disabled={isCreating}
+                disabled={isCreating || isUploadingAvatar}
               >
-                {isCreating ? (
+                {isCreating || isUploadingAvatar ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Criando...
+                    Salvando...
                   </>
                 ) : (
                   "Cadastrar Usuário"

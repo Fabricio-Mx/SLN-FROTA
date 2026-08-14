@@ -15,6 +15,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+.history/
 
 # env files
 .env*
@@ -25,3 +26,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.vercel
+.env*.local
+
+# local data mirror (contains real PII: names, CPF, plates, values)
+/data/
+
+# ad-hoc analysis scratch files (contain real PII, never commit)
+/feb_prod*.json
+/feb_dup_groups.json

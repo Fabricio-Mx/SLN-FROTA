@@ -47,11 +47,9 @@ export function addMonthlyFuelAmount(amount: number): number {
 }
 
 export function useMonthlyFuelTotal() {
-  const [total, setTotal] = useState(0)
+  const [total, setTotal] = useState(() => readMonthlyTotal())
 
   useEffect(() => {
-    setTotal(readMonthlyTotal())
-
     const handleStorage = (event: StorageEvent) => {
       if (event.key === MONTH_KEY_STORAGE || event.key === TOTAL_STORAGE) {
         setTotal(readMonthlyTotal())

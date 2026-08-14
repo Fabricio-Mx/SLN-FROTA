@@ -20,7 +20,7 @@ export async function GET(req: Request) {
 
   if (!name || !inumber || !date || !md || !plc) {
     return new NextResponse(
-      `<html><body><h1>Dados incompletos</h1><p>Preencha todos os campos do colaborador e veiculo.</p></body></html>`,
+      `<html><body><h1>Dados incompletos</h1><p>Preencha todos os campos do colaborador e veículo.</p></body></html>`,
       { headers: { "Content-Type": "text/html" } },
     )
   }
@@ -30,7 +30,7 @@ export async function GET(req: Request) {
     content = await fs.readFile(TEMPLATE_PATH)
   } catch {
     return new NextResponse(
-      `<html><body><h1>Erro</h1><p>Modelo do termo nao encontrado.</p></body></html>`,
+      `<html><body><h1>Erro</h1><p>Modelo do termo não encontrado.</p></body></html>`,
       { headers: { "Content-Type": "text/html" } },
     )
   }
@@ -82,7 +82,7 @@ export async function GET(req: Request) {
     })
   } catch (err) {
     return new NextResponse(
-      `<html><body><h1>Erro</h1><p>Falha ao processar o termo: ${err instanceof Error ? err.message : "Erro desconhecido"}</p><p>Certifique-se de que o LibreOffice esta instalado no sistema.</p></body></html>`,
+      `<html><body><h1>Erro</h1><p>Falha ao processar o termo: ${err instanceof Error ? err.message : "Erro desconhecido"}</p><p>Certifique-se de que o LibreOffice está instalado no sistema.</p></body></html>`,
       { headers: { "Content-Type": "text/html" } },
     )
   }

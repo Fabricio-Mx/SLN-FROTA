@@ -1,11 +1,10 @@
 import { redirect } from "next/navigation"
-import { cookies } from "next/headers"
+import { verifySession } from "@/lib/auth"
 
 export default async function HomePage() {
-  const cookieStore = await cookies()
-  const userCookie = cookieStore.get("app_user")
+  const session = await verifySession()
 
-  if (userCookie?.value) {
+  if (session) {
     redirect("/dashboard")
   } else {
     redirect("/auth/login")

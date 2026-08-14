@@ -3,6 +3,7 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text not null,
   nome text,
+  avatar_url text,
   role text default 'consulta',
   is_admin boolean default false,
   created_at timestamp with time zone default now(),

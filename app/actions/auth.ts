@@ -3,10 +3,25 @@
 import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import { isMasterLogin, getMasterUser, MASTER_CREDENTIALS } from "@/lib/auth-shared"
+import { SESSION_ACTIVITY_COOKIE, USER_SESSION_COOKIE } from "@/lib/auth"
 import { createAdminClient } from "@/lib/supabase/admin"
 import type { AppUser } from "@/lib/types"
 
 const MASTER_DB_EMAIL = process.env.MASTER_DB_EMAIL || "admin@sln.com"
+
+async function setSessionCookies(user: AppUser) {
+  const cookieStore = await cookies()
+  const baseOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 7,
+  }
+
+  cookieStore.set(USER_SESSION_COOKIE, JSON.stringify(user), baseOptions)
+  cookieStore.set(SESSION_ACTIVITY_COOKIE, String(Date.now()), baseOptions)
+}
 
 async function ensureMasterUser(): Promise<AppUser | null> {
   try {
@@ -48,6 +63,7 @@ async function ensureMasterUser(): Promise<AppUser | null> {
       email: MASTER_DB_EMAIL,
       nome: "Administrador Mestre",
       role: "mestre",
+      avatarUrl: null,
       isMaster: true,
     }
   } catch {
@@ -58,15 +74,20 @@ async function ensureMasterUser(): Promise<AppUser | null> {
 export async function loginAction(email: string, password: string): Promise<{ success: boolean; error?: string }> {
   // 1. Verificar login mestre
   if (isMasterLogin(email, password)) {
+    const { createClient } = await import("@/lib/supabase/server")
+    const supabase = await createClient()
     const masterUser = (await ensureMasterUser()) || getMasterUser()
-    const cookieStore = await cookies()
-    cookieStore.set("app_user", JSON.stringify(masterUser), {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: MASTER_DB_EMAIL,
+      password: MASTER_CREDENTIALS.password,
     })
+
+    if (signInError) {
+      return { success: false, error: "Falha ao iniciar a sessão mestre." }
+    }
+
+    await setSessionCookies(masterUser)
     return { success: true }
   }
 
@@ -95,17 +116,11 @@ export async function loginAction(email: string, password: string): Promise<{ su
       email: data.user.email || email,
       nome: profile?.nome || data.user.user_metadata?.nome || email,
       role: profile?.role || data.user.user_metadata?.role || "consulta",
+      avatarUrl: profile?.avatar_url || data.user.user_metadata?.avatar_url || null,
       isMaster: false,
     }
 
-    const cookieStore = await cookies()
-    cookieStore.set("app_user", JSON.stringify(appUser), {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
-    })
+    await setSessionCookies(appUser)
 
     return { success: true }
   } catch {
@@ -123,7 +138,12 @@ export async function logoutAction() {
   }
 
   const cookieStore = await cookies()
-  cookieStore.set("app_user", "", {
+  cookieStore.set(USER_SESSION_COOKIE, "", {
+    httpOnly: true,
+    path: "/",
+    maxAge: 0,
+  })
+  cookieStore.set(SESSION_ACTIVITY_COOKIE, "", {
     httpOnly: true,
     path: "/",
     maxAge: 0,
@@ -132,9 +152,27 @@ export async function logoutAction() {
   redirect("/auth/login")
 }
 
+export async function touchSessionActivityAction() {
+  const cookieStore = await cookies()
+
+  if (!cookieStore.get(USER_SESSION_COOKIE)?.value) {
+    return { success: false }
+  }
+
+  cookieStore.set(SESSION_ACTIVITY_COOKIE, String(Date.now()), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 7,
+  })
+
+  return { success: true }
+}
+
 export async function getCurrentUser() {
   const cookieStore = await cookies()
-  const userCookie = cookieStore.get("app_user")
+  const userCookie = cookieStore.get(USER_SESSION_COOKIE)
 
   if (!userCookie?.value) return null
 

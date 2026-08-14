@@ -56,21 +56,6 @@ function formatCurrency(value: number): string {
   }).format(value)
 }
 
-function isContractExpired(dateString: string | null | undefined): boolean {
-  if (!dateString) return false
-  const vencimento = new Date(dateString)
-  const today = new Date()
-  return vencimento < today
-}
-
-function isContractExpiring(dateString: string | null | undefined): boolean {
-  if (!dateString) return false
-  const vencimento = new Date(dateString)
-  const today = new Date()
-  const thirtyDaysFromNow = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000)
-  return vencimento <= thirtyDaysFromNow && vencimento >= today
-}
-
 export function AgregadosTable({ vehicles, colaboradores, onEdit, onDelete, onAssign, onUnassign }: AgregadosTableProps) {
   const getColaboradorName = (colaboradorId: string | null | undefined) => {
     if (!colaboradorId) return null
@@ -105,19 +90,20 @@ export function AgregadosTable({ vehicles, colaboradores, onEdit, onDelete, onAs
             <TableHead className="font-semibold">Mensalidade</TableHead>
             <TableHead className="font-semibold">Cartão</TableHead>
             <TableHead className="font-semibold">Status</TableHead>
-            <TableHead className="font-semibold">Sem parar</TableHead>
+            <TableHead className="font-semibold">Sem Parar</TableHead>
             <TableHead className="font-semibold">Colaborador</TableHead>
             <TableHead className="w-[70px]"></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {vehicles.map((vehicle) => {
+          {vehicles.map((vehicle, index) => {
             const cnhExpired = isCNHExpired(vehicle.dataVencimentoCNHAgregado)
             const cnhExpiring = isCNHExpiring(vehicle.dataVencimentoCNHAgregado)
             const colaboradorNome = getColaboradorName(vehicle.colaboradorId)
+            const rowClass = index % 2 === 0 ? "bg-white hover:bg-[#e7f4dc]" : "bg-[#fbfdf9] hover:bg-[#deefd0]"
 
             return (
-              <TableRow key={vehicle.id}>
+              <TableRow key={vehicle.id} className={rowClass}>
                 <TableCell className="font-mono font-medium">
                   <div className="flex items-center gap-2">
                     {vehicle.placa}
@@ -214,7 +200,7 @@ export function AgregadosTable({ vehicles, colaboradores, onEdit, onDelete, onAs
                 <TableCell className="text-center">
                   {vehicle.semParar ? (
                     <Badge className="bg-green-100/80 text-green-800 hover:bg-green-100 text-xs font-medium">
-                      Ativo
+                      Sem Parar
                     </Badge>
                   ) : (
                     <span className="text-sm font-medium text-muted-foreground">Não</span>

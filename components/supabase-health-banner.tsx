@@ -21,13 +21,13 @@ export function SupabaseHealthBanner() {
         const data = await res.json().catch(() => ({}))
         if (!mounted) return
         if (!res.ok || data?.ok === false) {
-          setState({ ok: false, message: data?.hint || data?.error || "Supabase indisponivel." })
+          setState({ ok: false, message: data?.hint || data?.error || "Supabase indisponível." })
           return
         }
         setState({ ok: true })
       } catch (err) {
         if (!mounted) return
-        const message = err instanceof Error ? err.message : "Supabase indisponivel."
+        const message = err instanceof Error ? err.message : "Supabase indisponível."
         setState({ ok: false, message })
       }
     }
@@ -46,7 +46,7 @@ export function SupabaseHealthBanner() {
   return (
     <div className="bg-destructive/10 border-b border-destructive/30 text-destructive">
       <div className="mx-auto max-w-7xl px-4 py-2 text-sm sm:px-6 lg:px-8">
-        <span className="font-semibold">Aviso:</span> {state.message || "Supabase indisponivel."} Verifique se o projeto esta ativo.
+        <span className="font-semibold">Aviso:</span> {state.message || "Supabase indisponível."} Verifique se o projeto está ativo.
       </div>
     </div>
   )

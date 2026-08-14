@@ -1,11 +1,10 @@
 import React from "react"
 import type { Metadata } from 'next'
-import { Inter, Nunito } from 'next/font/google'
+import { Nunito } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { Toaster } from '@/components/ui/toaster'
 import './globals.css'
 
-const _inter = Inter({ subsets: ["latin"] });
 const nunito = Nunito({ 
   subsets: ["latin"],
   variable: "--font-nunito",
@@ -42,7 +41,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body className={`font-sans antialiased ${nunito.variable}`}>
+      <body className={`font-sans antialiased overflow-x-hidden ${nunito.variable}`}>
         {children}
         <Toaster />
         <Analytics />

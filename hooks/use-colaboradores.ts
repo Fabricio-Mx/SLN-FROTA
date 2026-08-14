@@ -9,18 +9,39 @@ const TABLE = "fleet_colaboradores"
 const SWR_KEY = "fleet-colaboradores"
 const LEGACY_STORAGE_KEY = "fleet-colaboradores"
 const MIGRATION_KEY = "fleet-colaboradores-migrated"
+const SWR_OPTIONS = {
+  revalidateOnFocus: false,
+  revalidateOnReconnect: false,
+  dedupingInterval: 30_000,
+  keepPreviousData: true,
+} as const
 
 type ColaboradorRow = {
   id: string
   nome: string
   cpf: string
   telefone: string
+  email: string | null
   departamento: string
+  centro_custo: string | null
+  cep: string | null
+  endereco: string | null
   data_vencimento_cnh: string | null
   documentos: unknown[] | null
+  imagens_veiculo: unknown[] | null
   checklist: Record<string, unknown> | null
   created_at: string
   updated_at: string
+}
+
+const COLABORADOR_MIGRATION_COLUMNS = ["email", "centro_custo", "cep", "endereco", "imagens_veiculo"]
+
+const getColaboradorSchemaErrorMessage = (message?: string) => {
+  if (!message) return null
+  if (COLABORADOR_MIGRATION_COLUMNS.some((column) => message.includes(column))) {
+    return "Execute a migracao mais recente de colaboradores no Supabase antes de salvar."
+  }
+  return null
 }
 
 const mapColaboradorRow = (row: ColaboradorRow): Colaborador => {
@@ -29,10 +50,14 @@ const mapColaboradorRow = (row: ColaboradorRow): Colaborador => {
     nome: row.nome,
     cpf: row.cpf,
     telefone: row.telefone,
+    email: row.email || "",
     departamento: row.departamento,
+    centroCusto: row.centro_custo || "",
+    cep: row.cep || "",
+    endereco: row.endereco || "",
     dataVencimentoCNH: row.data_vencimento_cnh || "",
     documentos: Array.isArray(row.documentos) ? (row.documentos as Colaborador["documentos"]) : [],
-    checklist: (row.checklist as Colaborador["checklist"]) || undefined,
+    imagensVeiculo: Array.isArray(row.imagens_veiculo) ? (row.imagens_veiculo as Colaborador["imagensVeiculo"]) : [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -43,10 +68,15 @@ const toColaboradorRow = (formData: ColaboradorFormData): Omit<ColaboradorRow, "
     nome: formData.nome,
     cpf: formData.cpf,
     telefone: formData.telefone,
+    email: formData.email,
     departamento: formData.departamento,
+    centro_custo: formData.centroCusto,
+    cep: formData.cep,
+    endereco: formData.endereco,
     data_vencimento_cnh: formData.dataVencimentoCNH,
     documentos: formData.documentos ?? [],
-    checklist: formData.checklist ?? null,
+    imagens_veiculo: formData.imagensVeiculo ?? [],
+    checklist: null,
   }
 }
 
@@ -74,11 +104,12 @@ const fetcher = async (): Promise<Colaborador[]> => {
   return (data || []).map((row) => mapColaboradorRow(row as ColaboradorRow))
 }
 
-export function useColaboradores() {
-  const { data, error, isLoading } = useSWR<Colaborador[]>(SWR_KEY, fetcher)
+export function useColaboradores(enabled = true) {
+  const { data, error, isLoading } = useSWR<Colaborador[]>(enabled ? SWR_KEY : null, fetcher, SWR_OPTIONS)
   const colaboradores = data ?? []
 
   useEffect(() => {
+    if (!enabled) return
     if (typeof window === "undefined") return
     if (isLoading) return
     if (localStorage.getItem(MIGRATION_KEY) === "1") return
@@ -103,7 +134,7 @@ export function useColaboradores() {
     }
 
     migrate()
-  }, [isLoading, colaboradores.length])
+  }, [colaboradores.length, enabled, isLoading])
 
   const addColaborador = async (formData: ColaboradorFormData): Promise<Colaborador> => {
     const supabase = createClient()
@@ -115,7 +146,7 @@ export function useColaboradores() {
       .single()
 
     if (insertError || !inserted) {
-      throw new Error(insertError?.message || "Falha ao salvar colaborador.")
+      throw new Error(getColaboradorSchemaErrorMessage(insertError?.message) || insertError?.message || "Falha ao salvar colaborador.")
     }
 
     const colaborador = mapColaboradorRow(inserted as ColaboradorRow)
@@ -137,7 +168,7 @@ export function useColaboradores() {
       .single()
 
     if (updateError || !updated) {
-      throw new Error(updateError?.message || "Falha ao atualizar colaborador.")
+      throw new Error(getColaboradorSchemaErrorMessage(updateError?.message) || updateError?.message || "Falha ao atualizar colaborador.")
     }
 
     const colaborador = mapColaboradorRow(updated as ColaboradorRow)
@@ -168,4 +199,8 @@ export function useColaboradores() {
     deleteColaborador,
     getColaboradorById,
   }
+}
+
+export function refreshColaboradores() {
+  return mutate(SWR_KEY)
 }
