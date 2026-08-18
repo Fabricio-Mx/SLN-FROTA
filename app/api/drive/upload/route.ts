@@ -1,97 +1,13 @@
 import { NextResponse } from "next/server"
 import { Readable } from "node:stream"
-import { google } from "googleapis"
-import { createAdminClient } from "@/lib/supabase/admin"
+import { verifySession } from "@/lib/auth"
+import { describeDriveError, ensureFolder, getDriveClients, getDriveRootFolderId } from "@/lib/google-drive"
 
 export const runtime = "nodejs"
-
-const DRIVE_LIST_OPTIONS = {
-  supportsAllDrives: true,
-  includeItemsFromAllDrives: true,
-} as const
 
 const DRIVE_WRITE_OPTIONS = {
   supportsAllDrives: true,
 } as const
-
-const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID
-const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
-const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
-const GOOGLE_OAUTH_REDIRECT_URL = process.env.GOOGLE_OAUTH_REDIRECT_URL
-
-function getOAuthClient() {
-  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !GOOGLE_OAUTH_REDIRECT_URL) {
-    throw new Error("Google OAuth nao configurado.")
-  }
-
-  return new google.auth.OAuth2(
-    GOOGLE_OAUTH_CLIENT_ID,
-    GOOGLE_OAUTH_CLIENT_SECRET,
-    GOOGLE_OAUTH_REDIRECT_URL
-  )
-}
-
-async function getStoredRefreshToken() {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from("drive_tokens")
-    .select("refresh_token")
-    .eq("id", "default")
-    .maybeSingle()
-
-  if (error) {
-    throw new Error("Falha ao carregar token do Drive.")
-  }
-
-  return data?.refresh_token || null
-}
-
-async function getDriveClient() {
-  if (!DRIVE_FOLDER_ID) {
-    throw new Error("Drive folder id nao configurado.")
-  }
-
-  const refreshToken = await getStoredRefreshToken()
-  if (!refreshToken) {
-    throw new Error("Drive nao autorizado. Acesse /api/drive/oauth/start.")
-  }
-
-  const auth = getOAuthClient()
-  auth.setCredentials({ refresh_token: refreshToken })
-
-  return google.drive({ version: "v3", auth })
-}
-
-async function ensureFolder(drive: ReturnType<typeof google.drive>, name: string, parentId: string) {
-  const q = [
-    "mimeType='application/vnd.google-apps.folder'",
-    `name='${name.replace(/'/g, "\\'")}'`,
-    `'${parentId}' in parents`,
-    "trashed=false",
-  ].join(" and ")
-
-  const list = await drive.files.list({
-    q,
-    fields: "files(id, name)",
-    ...DRIVE_LIST_OPTIONS,
-  })
-
-  if (list.data.files && list.data.files.length > 0) {
-    return list.data.files[0].id as string
-  }
-
-  const created = await drive.files.create({
-    requestBody: {
-      name,
-      mimeType: "application/vnd.google-apps.folder",
-      parents: [parentId],
-    },
-    fields: "id",
-    ...DRIVE_WRITE_OPTIONS,
-  })
-
-  return created.data.id as string
-}
 
 function sanitizeName(value: string) {
   return value
@@ -103,44 +19,68 @@ function sanitizeName(value: string) {
 
 export async function POST(req: Request) {
   try {
-    const drive = await getDriveClient()
+    const session = await verifySession()
+    if (!session) {
+      return NextResponse.json({ error: "Sem permissão" }, { status: 403 })
+    }
+
     const formData = await req.formData()
 
     const file = formData.get("file") as File | null
     const entityType = String(formData.get("entityType") || "geral")
     const entityId = String(formData.get("entityId") || "sem-id")
     const label = String(formData.get("label") || "arquivo")
+    const subfolder = sanitizeName(String(formData.get("subfolder") || ""))
 
     if (!file) {
       return NextResponse.json({ error: "Arquivo nao enviado." }, { status: 400 })
     }
 
-    const rootId = DRIVE_FOLDER_ID as string
-    const typeFolderId = await ensureFolder(drive, sanitizeName(entityType), rootId)
-    const entityFolderId = await ensureFolder(drive, sanitizeName(entityId), typeFolderId)
-
+    const rootId = getDriveRootFolderId()
     const fileBuffer = Buffer.from(await file.arrayBuffer())
-    const stream = Readable.from(fileBuffer)
-
     const safeName = sanitizeName(file.name || "arquivo")
     const finalName = `${sanitizeName(label)}_${Date.now()}_${safeName}`
+    const driveClients = await getDriveClients()
+    let lastError: unknown = null
 
-    const created = await drive.files.create({
-      requestBody: {
-        name: finalName,
-        parents: [entityFolderId],
-      },
-      media: {
-        mimeType: file.type || "application/octet-stream",
-        body: stream,
-      },
-      fields: "id, name, webViewLink, webContentLink, mimeType, size",
-      ...DRIVE_WRITE_OPTIONS,
-    })
+    // Tenta OAuth e, se o token estiver invalido, cai para a conta de servico.
+    for (const drive of driveClients) {
+      try {
+        const typeFolderId = await ensureFolder(drive, sanitizeName(entityType), rootId)
+        const entityFolderId = await ensureFolder(drive, sanitizeName(entityId), typeFolderId)
+        const targetFolderId = subfolder ? await ensureFolder(drive, subfolder, entityFolderId) : entityFolderId
 
-    return NextResponse.json(created.data)
+        const created = await drive.files.create({
+          requestBody: {
+            name: finalName,
+            parents: [targetFolderId],
+          },
+          media: {
+            mimeType: file.type || "application/octet-stream",
+            body: Readable.from(fileBuffer),
+          },
+          fields: "id, name, webViewLink, webContentLink, mimeType, size",
+          ...DRIVE_WRITE_OPTIONS,
+        })
+
+        return NextResponse.json(created.data)
+      } catch (error) {
+        lastError = error
+      }
+    }
+
+    throw lastError ?? new Error("Nenhuma credencial do Drive disponivel.")
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Erro desconhecido"
-    return NextResponse.json({ error: message }, { status: 500 })
+    const message = describeDriveError(err)
+    const isExpiredAuth = message.toLowerCase().includes("invalid_grant")
+
+    return NextResponse.json(
+      {
+        error: isExpiredAuth
+          ? "A autorização do Google Drive expirou. Peça para um administrador reconectar a conta em /api/drive/oauth/start e tente novamente."
+          : message,
+      },
+      { status: 500 }
+    )
   }
 }

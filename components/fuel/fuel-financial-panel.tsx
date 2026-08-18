@@ -393,7 +393,17 @@ export function FuelFinancialPanel({ isMaster = false }: FuelFinancialPanelProps
             </div>
           ) : (
             <div className="grid gap-3">
-              {invoices.map((invoice) => (
+              {invoices.map((invoice) => {
+                // Faturas antigas guardaram o ciclo com a regra anterior, entao recalcula pelo mes de fechamento.
+                const invoiceBounds = getFuelFinancialPostingCycleBoundsForClosingMonth(invoice.cycleMonth)
+                const invoiceCycleStart = invoiceBounds
+                  ? invoiceBounds.start.toISOString().slice(0, 10)
+                  : invoice.cycleStart
+                const invoiceCycleEnd = invoiceBounds
+                  ? invoiceBounds.end.toISOString().slice(0, 10)
+                  : invoice.cycleEnd
+
+                return (
                 <div key={invoice.id} className="flex flex-col gap-4 rounded-2xl border border-[#e1e8db] bg-white/90 p-4 lg:flex-row lg:items-center lg:justify-between">
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -407,7 +417,7 @@ export function FuelFinancialPanel({ isMaster = false }: FuelFinancialPanelProps
                     <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
                       <span className="inline-flex items-center gap-1.5">
                         <CalendarRange className="h-4 w-4" />
-                        {formatDateLabel(invoice.cycleStart)} a {formatDateLabel(invoice.cycleEnd)}
+                        {formatDateLabel(invoiceCycleStart)} a {formatDateLabel(invoiceCycleEnd)}
                       </span>
                       <span className="inline-flex items-center gap-1.5">
                         <FileArchive className="h-4 w-4" />
@@ -428,7 +438,8 @@ export function FuelFinancialPanel({ isMaster = false }: FuelFinancialPanelProps
                     </Button>
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </CardContent>

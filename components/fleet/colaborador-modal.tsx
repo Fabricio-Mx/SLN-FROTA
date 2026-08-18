@@ -225,12 +225,13 @@ export function ColaboradorModal({
     }
   }
 
-  const uploadDriveFile = async (file: File, label: string): Promise<DriveFile> => {
+  const uploadDriveFile = async (file: File, label: string, subfolder: string): Promise<DriveFile> => {
     const body = new FormData()
     body.append("file", file)
     body.append("entityType", "colaboradores")
     body.append("entityId", sanitizeFileName(formData.cpf || "sem-cpf"))
     body.append("label", label)
+    body.append("subfolder", subfolder)
 
     const res = await fetch("/api/drive/upload", {
       method: "POST",
@@ -262,7 +263,7 @@ export function ColaboradorModal({
       const uploaded = [...documentos]
 
       for (const file of Array.from(files)) {
-        const data = await uploadDriveFile(file, "documento")
+        const data = await uploadDriveFile(file, "documento", "documentos")
         uploaded.push(data)
       }
 
@@ -296,7 +297,7 @@ export function ColaboradorModal({
       const uploaded = [...cnhArquivos]
 
       for (const file of Array.from(files)) {
-        const data = await uploadDriveFile(file, "cnh")
+        const data = await uploadDriveFile(file, "cnh", "cnh")
         uploaded.push(data)
       }
 
@@ -348,7 +349,7 @@ export function ColaboradorModal({
       const uploaded = [...current]
 
       for (const file of Array.from(files).slice(0, remaining)) {
-        const data = await uploadDriveFile(file, `registro_veiculo_${uploaded.length + 1}`)
+        const data = await uploadDriveFile(file, `registro_veiculo_${uploaded.length + 1}`, "veiculo")
         uploaded.push(data)
       }
 

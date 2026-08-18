@@ -6,8 +6,15 @@ export const runtime = "nodejs"
 
 async function resetToken() {
   const session = await verifySession()
-  if (!session || session.role !== "mestre") {
-    return NextResponse.json({ error: "Sem permissao" }, { status: 403 })
+  if (!session) {
+    return NextResponse.json({ error: "Sessão expirada. Entre no sistema novamente." }, { status: 403 })
+  }
+
+  if (session.role !== "mestre" && !session.isMaster) {
+    return NextResponse.json(
+      { error: "Apenas o usuário mestre pode limpar a autorização do Google Drive." },
+      { status: 403 }
+    )
   }
 
   const supabase = createAdminClient()

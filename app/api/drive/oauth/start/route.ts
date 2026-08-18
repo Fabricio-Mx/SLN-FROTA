@@ -3,32 +3,37 @@ import { randomUUID } from "node:crypto"
 import { google } from "googleapis"
 import { cookies } from "next/headers"
 import { verifySession } from "@/lib/auth"
+import { resolveDriveRedirectUrl } from "@/lib/google-drive"
 
 export const runtime = "nodejs"
 
 const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
 const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
-const GOOGLE_OAUTH_REDIRECT_URL = process.env.GOOGLE_OAUTH_REDIRECT_URL
 
-function getOAuthClient() {
-  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !GOOGLE_OAUTH_REDIRECT_URL) {
+function getOAuthClient(redirectUrl: string) {
+  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !redirectUrl) {
     throw new Error("Google OAuth nao configurado.")
   }
 
-  return new google.auth.OAuth2(
-    GOOGLE_OAUTH_CLIENT_ID,
-    GOOGLE_OAUTH_CLIENT_SECRET,
-    GOOGLE_OAUTH_REDIRECT_URL
-  )
+  return new google.auth.OAuth2(GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, redirectUrl)
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await verifySession()
-  if (!session || session.role !== "mestre") {
-    return NextResponse.json({ error: "Sem permissao" }, { status: 403 })
+
+  // Navegacao direta pelo browser: manda para o login em vez de devolver JSON.
+  if (!session) {
+    return NextResponse.redirect(new URL("/auth/login", req.url))
   }
 
-  const auth = getOAuthClient()
+  if (session.role !== "mestre" && !session.isMaster) {
+    return NextResponse.json(
+      { error: "Apenas o usuário mestre pode autorizar o Google Drive." },
+      { status: 403 }
+    )
+  }
+
+  const auth = getOAuthClient(resolveDriveRedirectUrl(req.url))
   const state = randomUUID()
   const authUrl = auth.generateAuthUrl({
     access_type: "offline",

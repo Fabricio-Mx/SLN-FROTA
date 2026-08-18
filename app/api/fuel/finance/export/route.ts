@@ -170,13 +170,13 @@ function filterRecordsByCycle(records: FuelRecord[], cycleStart: Date, cycleEnd:
   normalizedStart.setHours(0, 0, 0, 0)
 
   const normalizedEnd = new Date(cycleEnd)
-  normalizedEnd.setHours(0, 0, 0, 0)
+  normalizedEnd.setHours(23, 59, 59, 999)
 
   return records.filter((record) => {
-    const parsed = parseFuelDateTime(record.postingDate || record.dateTime)
+    const parsed = parseFuelDateTime(record.dateTime)
     if (Number.isNaN(parsed.getTime())) return false
 
-    return parsed >= normalizedStart && parsed < normalizedEnd
+    return parsed >= normalizedStart && parsed <= normalizedEnd
   })
 }
 

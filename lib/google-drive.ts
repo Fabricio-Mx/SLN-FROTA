@@ -116,6 +116,17 @@ export function getDriveRootFolderId() {
   return folderId
 }
 
+// Em desenvolvimento o callback precisa voltar para a propria origem, senao o cookie de sessao nao acompanha.
+export function resolveDriveRedirectUrl(requestUrl: string) {
+  const origin = new URL(requestUrl).origin
+
+  if (origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) {
+    return `${origin}/api/drive/oauth/callback`
+  }
+
+  return normalizeEnvValue(GOOGLE_OAUTH_REDIRECT_URL) ?? ""
+}
+
 export async function getDriveClients() {
   const clients: GoogleDriveClient[] = []
 

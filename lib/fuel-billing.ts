@@ -1,6 +1,6 @@
+// Ciclo Veloe: dia 2 do mes anterior ate o dia 1 do mes de fechamento, lido pela coluna Data e Hora.
 const FUEL_BILLING_CYCLE_START_DAY = 2
-const FUEL_BILLING_CYCLE_END_DAY = 4
-const FUEL_FINANCIAL_POSTING_CYCLE_START_DAY = 1
+const FUEL_BILLING_CYCLE_END_DAY = 1
 
 function formatMonthKey(year: number, monthIndex: number): string {
   const month = `${monthIndex + 1}`.padStart(2, "0")
@@ -31,7 +31,7 @@ export function getFuelBillingCycleClosingMonthKey(anchorDate: Date): string {
 }
 
 export function getLatestClosedFuelBillingCycleMonthKey(anchorDate: Date): string {
-  if (anchorDate.getDate() >= FUEL_BILLING_CYCLE_END_DAY) {
+  if (anchorDate.getDate() > FUEL_BILLING_CYCLE_END_DAY) {
     return formatMonthKey(anchorDate.getFullYear(), anchorDate.getMonth())
   }
 
@@ -57,22 +57,9 @@ export function getFuelBillingCycleBoundsForClosingMonth(monthKey: string) {
 }
 
 export function getFuelFinancialPostingCycleBounds(anchorDate: Date) {
-  const billingBounds = getFuelBillingCycleBounds(anchorDate)
-
-  return {
-    start: new Date(billingBounds.start.getFullYear(), billingBounds.start.getMonth(), FUEL_FINANCIAL_POSTING_CYCLE_START_DAY),
-    end: billingBounds.end,
-  }
+  return getFuelBillingCycleBounds(anchorDate)
 }
 
 export function getFuelFinancialPostingCycleBoundsForClosingMonth(monthKey: string) {
-  const billingBounds = getFuelBillingCycleBoundsForClosingMonth(monthKey)
-  if (!billingBounds) {
-    return null
-  }
-
-  return {
-    start: new Date(billingBounds.start.getFullYear(), billingBounds.start.getMonth(), FUEL_FINANCIAL_POSTING_CYCLE_START_DAY),
-    end: billingBounds.end,
-  }
+  return getFuelBillingCycleBoundsForClosingMonth(monthKey)
 }

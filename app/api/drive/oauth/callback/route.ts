@@ -3,29 +3,35 @@ import { google } from "googleapis"
 import { cookies } from "next/headers"
 import { verifySession } from "@/lib/auth"
 import { createAdminClient } from "@/lib/supabase/admin"
+import { resolveDriveRedirectUrl } from "@/lib/google-drive"
 
 export const runtime = "nodejs"
 
 const GOOGLE_OAUTH_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
 const GOOGLE_OAUTH_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
-const GOOGLE_OAUTH_REDIRECT_URL = process.env.GOOGLE_OAUTH_REDIRECT_URL
 
-function getOAuthClient() {
-  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !GOOGLE_OAUTH_REDIRECT_URL) {
+function getOAuthClient(redirectUrl: string) {
+  if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !redirectUrl) {
     throw new Error("Google OAuth nao configurado.")
   }
 
-  return new google.auth.OAuth2(
-    GOOGLE_OAUTH_CLIENT_ID,
-    GOOGLE_OAUTH_CLIENT_SECRET,
-    GOOGLE_OAUTH_REDIRECT_URL
-  )
+  return new google.auth.OAuth2(GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, redirectUrl)
 }
 
 export async function GET(req: Request) {
   const session = await verifySession()
-  if (!session || session.role !== "mestre") {
-    return NextResponse.json({ error: "Sem permissao" }, { status: 403 })
+  if (!session) {
+    return NextResponse.json(
+      { error: "Sessão expirada durante a autorização. Entre no sistema novamente e repita o processo." },
+      { status: 403 }
+    )
+  }
+
+  if (session.role !== "mestre" && !session.isMaster) {
+    return NextResponse.json(
+      { error: "Apenas o usuário mestre pode autorizar o Google Drive." },
+      { status: 403 }
+    )
   }
 
   const url = new URL(req.url)
@@ -42,7 +48,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Estado OAuth invalido." }, { status: 400 })
   }
 
-  const auth = getOAuthClient()
+  const auth = getOAuthClient(resolveDriveRedirectUrl(req.url))
   const { tokens } = await auth.getToken(code)
 
   if (!tokens.refresh_token) {

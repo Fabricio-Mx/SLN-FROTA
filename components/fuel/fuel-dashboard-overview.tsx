@@ -446,8 +446,7 @@ export function FuelDashboardOverview({ isMaster = false }: FuelDashboardOvervie
     const params = new URLSearchParams({
       start: toDateInputValue(billingCycle.start),
       end: toDateInputValue(billingCycle.end),
-      dateField: "posting",
-      endExclusive: "true",
+      dateField: "transaction",
     })
 
     return `${FUEL_DATA_SWR_KEY}?${params.toString()}`

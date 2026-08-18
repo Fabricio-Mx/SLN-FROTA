@@ -80,8 +80,7 @@ function buildRangeUrl(cycleMonth: string): string | null {
   const params = new URLSearchParams({
     start: bounds.start.toISOString().slice(0, 10),
     end: bounds.end.toISOString().slice(0, 10),
-    dateField: "posting",
-    endExclusive: "true",
+    dateField: "transaction",
   })
 
   return `/api/fuel/data?${params.toString()}`
