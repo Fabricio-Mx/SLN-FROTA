@@ -15,21 +15,30 @@ export interface ColaboradorFilters {
   search: string
   ordenacao: "nome" | "cnh_vencimento_asc" | "cnh_vencimento_desc"
   statusCNH: "todos" | "vencida" | "vencendo" | "valida"
+  segmento: string
+  centroCusto: string
 }
 
 interface ColaboradoresFiltersProps {
   filters: ColaboradorFilters
+  segmentos: string[]
+  centrosCusto: string[]
   onFiltersChange: (filters: ColaboradorFilters) => void
 }
 
-export function ColaboradoresFilters({ filters, onFiltersChange }: ColaboradoresFiltersProps) {
+export function ColaboradoresFilters({
+  filters,
+  segmentos,
+  centrosCusto,
+  onFiltersChange,
+}: ColaboradoresFiltersProps) {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Buscar por nome, CPF, telefone ou centro de custo..."
+            placeholder="Buscar por nome, CPF/CNPJ, telefone, tipo, segmento ou centro de custo..."
             value={filters.search}
             onChange={(e) =>
               onFiltersChange({ ...filters, search: e.target.value })
@@ -39,6 +48,40 @@ export function ColaboradoresFilters({ filters, onFiltersChange }: Colaboradores
         </div>
         
         <div className="flex flex-wrap gap-2">
+          <Select
+            value={filters.segmento}
+            onValueChange={(value) => onFiltersChange({ ...filters, segmento: value })}
+          >
+            <SelectTrigger className="h-11 w-[180px] text-[0.95rem]">
+              <SelectValue placeholder="Segmento" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos os segmentos</SelectItem>
+              {segmentos.map((segmento) => (
+                <SelectItem key={segmento} value={segmento}>
+                  {segmento}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filters.centroCusto}
+            onValueChange={(value) => onFiltersChange({ ...filters, centroCusto: value })}
+          >
+            <SelectTrigger className="h-11 w-[260px] text-[0.95rem]">
+              <SelectValue placeholder="Centro de custo" />
+            </SelectTrigger>
+            <SelectContent className="max-h-[320px]">
+              <SelectItem value="todos">Todos os centros de custo</SelectItem>
+              {centrosCusto.map((centro) => (
+                <SelectItem key={centro} value={centro}>
+                  {centro}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           <Select
             value={filters.ordenacao}
             onValueChange={(value) =>

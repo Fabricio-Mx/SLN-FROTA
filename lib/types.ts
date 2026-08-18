@@ -64,10 +64,15 @@ export interface Colaborador {
   telefone: string
   email: string
   departamento: string
+  tipo: string
+  segmento: string
   centroCusto: string
   cep: string
   endereco: string
   dataVencimentoCNH: string
+  cnhNumero: string
+  cnhCategoria: string
+  cnhArquivos?: DriveFile[]
   documentos?: DriveFile[]
   imagensVeiculo?: DriveFile[]
   createdAt: string

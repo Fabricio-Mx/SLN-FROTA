@@ -1,6 +1,6 @@
 "use client"
 
-import { ExternalLink } from "lucide-react"
+import { Download, ExternalLink, Eye, Trash2 } from "lucide-react"
 import { useEffect, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -37,13 +37,20 @@ const initialFormData: ColaboradorFormData = {
   telefone: "",
   email: "",
   departamento: "",
+  tipo: "",
+  segmento: "",
   centroCusto: "",
   cep: "",
   endereco: "",
   dataVencimentoCNH: "",
+  cnhNumero: "",
+  cnhCategoria: "",
+  cnhArquivos: [],
   documentos: [],
   imagensVeiculo: [],
 }
+
+const CNH_CATEGORIAS = ["A", "B", "AB", "C", "AC", "D", "AD", "E", "AE"]
 
 export function ColaboradorModal({
   open,
@@ -57,6 +64,7 @@ export function ColaboradorModal({
   const [selectedVeiculoKm, setSelectedVeiculoKm] = useState<string>("")
   const [errors, setErrors] = useState<Partial<Record<keyof ColaboradorFormData, string>>>({})
   const [uploadingDocs, setUploadingDocs] = useState(false)
+  const [uploadingCnh, setUploadingCnh] = useState(false)
   const [uploadingVehicleImages, setUploadingVehicleImages] = useState(false)
 
   const availableVehicles = vehicles.filter((vehicle) => {
@@ -75,10 +83,15 @@ export function ColaboradorModal({
         telefone: colaborador.telefone || "",
         email: colaborador.email || "",
         departamento: colaborador.departamento || "",
+        tipo: colaborador.tipo || "",
+        segmento: colaborador.segmento || "",
         centroCusto: colaborador.centroCusto || "",
         cep: "",
         endereco: "",
         dataVencimentoCNH: colaborador.dataVencimentoCNH || "",
+        cnhNumero: colaborador.cnhNumero || "",
+        cnhCategoria: colaborador.cnhCategoria || "",
+        cnhArquivos: colaborador.cnhArquivos || [],
         documentos: colaborador.documentos || [],
         imagensVeiculo: colaborador.imagensVeiculo || [],
       })
@@ -95,10 +108,20 @@ export function ColaboradorModal({
   }, [colaborador, open, vehicles])
 
   const documentos = formData.documentos || []
+  const cnhArquivos = formData.cnhArquivos || []
   const imagensVeiculo = formData.imagensVeiculo || []
 
   const formatCPF = (value: string) => {
-    const numbers = value.replace(/\D/g, "")
+    const numbers = value.replace(/\D/g, "").slice(0, 14)
+
+    if (numbers.length > 11) {
+      return numbers
+        .replace(/(\d{2})(\d)/, "$1.$2")
+        .replace(/(\d{3})(\d)/, "$1.$2")
+        .replace(/(\d{3})(\d)/, "$1/$2")
+        .replace(/(\d{4})(\d{1,2})$/, "$1-$2")
+    }
+
     return numbers
       .replace(/(\d{3})(\d)/, "$1.$2")
       .replace(/(\d{3})(\d)/, "$1.$2")
@@ -256,6 +279,47 @@ export function ColaboradorModal({
     }
   }
 
+  const handleUploadCnh = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+
+    if (!formData.cpf.trim()) {
+      toast({
+        title: "Aviso",
+        description: "Informe o CPF antes de enviar a CNH.",
+      })
+      return
+    }
+
+    setUploadingCnh(true)
+
+    try {
+      const uploaded = [...cnhArquivos]
+
+      for (const file of Array.from(files)) {
+        const data = await uploadDriveFile(file, "cnh")
+        uploaded.push(data)
+      }
+
+      setFormData((current) => ({ ...current, cnhArquivos: uploaded }))
+      toast({ title: "Sucesso", description: "CNH enviada para o Drive." })
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao enviar a CNH.",
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingCnh(false)
+    }
+  }
+
+  const handleRemoveCnh = (fileId: string) => {
+    setFormData((current) => ({
+      ...current,
+      cnhArquivos: (current.cnhArquivos || []).filter((file) => file.id !== fileId),
+    }))
+  }
+
   const handleUploadVehicleImages = async (files: FileList | null) => {
     if (!files || files.length === 0) return
 
@@ -310,30 +374,18 @@ export function ColaboradorModal({
 
     const cpfNumbers = formData.cpf.replace(/\D/g, "")
     if (!cpfNumbers) {
-      newErrors.cpf = "CPF é obrigatório"
-    } else if (cpfNumbers.length !== 11) {
-      newErrors.cpf = "CPF deve ter 11 dígitos"
+      newErrors.cpf = "CPF/CNPJ é obrigatório"
+    } else if (cpfNumbers.length !== 11 && cpfNumbers.length !== 14) {
+      newErrors.cpf = "Informe um CPF (11 dígitos) ou CNPJ (14 dígitos)"
     }
 
     const telefoneNumbers = formData.telefone.replace(/\D/g, "")
-    if (!telefoneNumbers) {
-      newErrors.telefone = "Telefone é obrigatório"
-    } else if (telefoneNumbers.length < 10 || telefoneNumbers.length > 11) {
+    if (telefoneNumbers && (telefoneNumbers.length < 10 || telefoneNumbers.length > 11)) {
       newErrors.telefone = "Telefone inválido"
     }
 
-    if (!formData.email.trim()) {
-      newErrors.email = "E-mail é obrigatório"
-    } else if (!isValidEmail(formData.email.trim())) {
+    if (formData.email.trim() && !isValidEmail(formData.email.trim())) {
       newErrors.email = "E-mail inválido"
-    }
-
-    if (!formData.departamento.trim()) {
-      newErrors.departamento = "Departamento é obrigatório"
-    }
-
-    if (!formData.dataVencimentoCNH) {
-      newErrors.dataVencimentoCNH = "Data de vencimento da CNH é obrigatória"
     }
 
     setErrors(newErrors)
@@ -385,13 +437,13 @@ export function ColaboradorModal({
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="cpf">CPF</Label>
+              <Label htmlFor="cpf">CPF / CNPJ</Label>
               <Input
                 id="cpf"
                 placeholder="000.000.000-00"
                 value={formData.cpf}
                 onChange={(e) => setFormData({ ...formData, cpf: formatCPF(e.target.value) })}
-                maxLength={14}
+                maxLength={18}
               />
               {errors.cpf ? <p className="text-sm text-destructive">{errors.cpf}</p> : null}
             </div>
@@ -433,6 +485,26 @@ export function ColaboradorModal({
             </div>
 
             <div className="grid gap-2">
+              <Label htmlFor="tipo">Tipo</Label>
+              <Input
+                id="tipo"
+                placeholder="Ex: 1 - SLN, 5 - PJ, 6 - Autonomo"
+                value={formData.tipo}
+                onChange={(e) => setFormData({ ...formData, tipo: e.target.value })}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="segmento">Segmento</Label>
+              <Input
+                id="segmento"
+                placeholder="Ex: TELECOM, OBRA"
+                value={formData.segmento}
+                onChange={(e) => setFormData({ ...formData, segmento: e.target.value.toUpperCase() })}
+              />
+            </div>
+
+            <div className="grid gap-2">
               <Label htmlFor="centroCusto">Centro de Custo</Label>
               <Input
                 id="centroCusto"
@@ -442,19 +514,112 @@ export function ColaboradorModal({
               />
             </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="dataVencimentoCNH">Data de Vencimento da CNH</Label>
-              <Input
-                id="dataVencimentoCNH"
-                type="date"
-                value={formData.dataVencimentoCNH}
-                onChange={(e) => setFormData({ ...formData, dataVencimentoCNH: e.target.value })}
-              />
-              {errors.dataVencimentoCNH ? <p className="text-sm text-destructive">{errors.dataVencimentoCNH}</p> : null}
+            <div className="grid gap-3 rounded-lg border border-border p-3">
+              <p className="text-sm font-medium text-foreground">CNH</p>
+
+              <div className="grid gap-2">
+                <Label htmlFor="cnhNumero">Número de Registro</Label>
+                <Input
+                  id="cnhNumero"
+                  inputMode="numeric"
+                  placeholder="00000000000"
+                  value={formData.cnhNumero}
+                  onChange={(e) => setFormData({ ...formData, cnhNumero: e.target.value.replace(/\D/g, "").slice(0, 11) })}
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="cnhCategoria">Categoria</Label>
+                <Select
+                  value={formData.cnhCategoria || "none"}
+                  onValueChange={(value) => setFormData({ ...formData, cnhCategoria: value === "none" ? "" : value })}
+                >
+                  <SelectTrigger id="cnhCategoria">
+                    <SelectValue placeholder="Selecione a categoria" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Não informada</SelectItem>
+                    {CNH_CATEGORIAS.map((categoria) => (
+                      <SelectItem key={categoria} value={categoria}>
+                        {categoria}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="dataVencimentoCNH">Data de Vencimento</Label>
+                <Input
+                  id="dataVencimentoCNH"
+                  type="date"
+                  value={formData.dataVencimentoCNH}
+                  onChange={(e) => setFormData({ ...formData, dataVencimentoCNH: e.target.value })}
+                />
+                {errors.dataVencimentoCNH ? (
+                  <p className="text-sm text-destructive">{errors.dataVencimentoCNH}</p>
+                ) : null}
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="cnhArquivos">Arquivo da CNH (PDF ou imagem)</Label>
+                <Input
+                  id="cnhArquivos"
+                  type="file"
+                  multiple
+                  accept=".pdf,image/*"
+                  onChange={(e) => handleUploadCnh(e.target.files)}
+                  disabled={uploadingCnh}
+                />
+                {cnhArquivos.length > 0 ? (
+                  <div className="grid gap-2">
+                    {cnhArquivos.map((arquivo) => (
+                      <div
+                        key={arquivo.id}
+                        className="flex items-center justify-between gap-2 rounded border border-border px-2 py-1.5"
+                      >
+                        <span className="truncate text-xs text-muted-foreground">{arquivo.name}</span>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" asChild>
+                            <a
+                              href={`/api/drive/file/${arquivo.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Visualizar CNH"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </a>
+                          </Button>
+                          <Button type="button" variant="ghost" size="icon" className="h-7 w-7" asChild>
+                            <a href={`/api/drive/file/${arquivo.id}?download=1`} title="Baixar CNH">
+                              <Download className="h-4 w-4" />
+                            </a>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive"
+                            onClick={() => handleRemoveCnh(arquivo.id)}
+                            title="Remover da ficha"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <p className="text-xs text-muted-foreground">
+                  {uploadingCnh
+                    ? "Enviando CNH..."
+                    : "A CNH é salva no Drive da empresa e pode ser visualizada ou baixada aqui."}
+                </p>
+              </div>
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="documentos">Documentos (CNH/CPF/Termo)</Label>
+              <Label htmlFor="documentos">Outros Documentos (CPF/Termo/Comprovantes)</Label>
               <Input
                 id="documentos"
                 type="file"
@@ -468,7 +633,7 @@ export function ColaboradorModal({
                   {documentos.map((doc) => (
                     <a
                       key={doc.id}
-                      href={doc.webViewLink || "#"}
+                      href={`/api/drive/file/${doc.id}`}
                       target="_blank"
                       rel="noreferrer"
                       className="rounded bg-muted px-2 py-1 text-muted-foreground hover:text-foreground"

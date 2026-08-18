@@ -1,14 +1,8 @@
 "use client"
 
-import { Edit, MoreHorizontal, Trash2 } from "lucide-react"
+import { Download, Edit, FileText, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   Table,
   TableBody,
@@ -25,6 +19,27 @@ interface ColaboradoresTableProps {
   canManage?: boolean
   onEdit: (colaborador: Colaborador) => void
   onDelete: (id: string) => void
+}
+
+function getCnhStatus(value: string) {
+  if (!value) return null
+
+  const vencimento = new Date(value)
+  if (Number.isNaN(vencimento.getTime())) return null
+
+  const hoje = new Date()
+  const trintaDias = new Date(hoje.getTime() + 30 * 24 * 60 * 60 * 1000)
+  const data = vencimento.toLocaleDateString("pt-BR")
+
+  if (vencimento < hoje) {
+    return { label: `${data} (Vencida)`, className: "text-destructive" }
+  }
+
+  if (vencimento <= trintaDias) {
+    return { label: `${data} (Vencendo)`, className: "text-chart-3" }
+  }
+
+  return { label: data, className: "text-foreground" }
 }
 
 export function ColaboradoresTable({
@@ -52,124 +67,139 @@ export function ColaboradoresTable({
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
+    <div className="rounded-lg border border-border bg-card">
       <Table>
         <TableHeader>
-          <TableRow className="bg-muted/50">
-            <TableHead className="text-[0.88rem] font-semibold">Nome</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold">CPF</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold">Telefone</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold">Departamento</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold">Centro de Custo</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold">Vencimento CNH</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold">Veículo</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold">KM</TableHead>
-            {canManage ? <TableHead className="w-[70px]"></TableHead> : null}
+          <TableRow className="bg-muted">
+            <TableHead className="sticky left-0 z-30 min-w-[240px] bg-muted text-[0.88rem] font-semibold">
+              Colaborador
+            </TableHead>
+            <TableHead className="min-w-[150px] text-[0.88rem] font-semibold">Contato</TableHead>
+            <TableHead className="min-w-[140px] text-[0.88rem] font-semibold">Vínculo</TableHead>
+            <TableHead className="min-w-[170px] text-[0.88rem] font-semibold">CNH</TableHead>
+            <TableHead className="min-w-[200px] text-[0.88rem] font-semibold">Centro de Custo</TableHead>
+            <TableHead className="min-w-[130px] text-[0.88rem] font-semibold">Veículo</TableHead>
+            {canManage ? (
+              <TableHead className="sticky right-0 z-30 w-[110px] bg-muted text-right text-[0.88rem] font-semibold">
+                Ações
+              </TableHead>
+            ) : null}
           </TableRow>
         </TableHeader>
         <TableBody>
           {colaboradores.map((colaborador, index) => {
             const assignedVehicles = getVehiclesByColaborador(colaborador.id)
-            const rowClass = index % 2 === 0 ? "bg-white hover:bg-[#e7f4dc]" : "bg-[#fbfdf9] hover:bg-[#deefd0]"
+            const cellBg = index % 2 === 0 ? "bg-white" : "bg-[#fbfdf9]"
+            const stickyClass = `sticky z-10 ${cellBg} group-hover:bg-[#deefd0]`
+            const cnh = getCnhStatus(colaborador.dataVencimentoCNH)
+            const cnhFile = colaborador.cnhArquivos?.[0]
 
             return (
-              <TableRow key={colaborador.id} className={rowClass}>
-                <TableCell>
-                  <div className="space-y-1">
-                    <p className="text-[0.95rem] font-medium">{colaborador.nome}</p>
-                    {colaborador.email ? <p className="text-xs text-muted-foreground">{colaborador.email}</p> : null}
+              <TableRow key={colaborador.id} className={`group ${cellBg} hover:bg-[#deefd0]`}>
+                <TableCell className={`${stickyClass} left-0`}>
+                  <div className="space-y-0.5">
+                    <p className="text-[0.95rem] font-medium leading-tight">{colaborador.nome}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{colaborador.cpf || "-"}</p>
+                    {colaborador.email ? (
+                      <p className="truncate text-xs text-muted-foreground">{colaborador.email}</p>
+                    ) : null}
                   </div>
                 </TableCell>
-                <TableCell className="font-mono text-[0.9rem] text-muted-foreground">
-                  {colaborador.cpf}
+                <TableCell className="text-[0.92rem]">{colaborador.telefone || "-"}</TableCell>
+                <TableCell>
+                  <div className="flex flex-col items-start gap-1">
+                    <span className="text-[0.9rem] text-muted-foreground">{colaborador.tipo || "-"}</span>
+                    {colaborador.segmento ? (
+                      <Badge variant="outline" className="text-[0.7rem]">
+                        {colaborador.segmento}
+                      </Badge>
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell>
-                  <p className="text-[0.92rem]">{colaborador.telefone || "-"}</p>
+                  <div className="flex items-center gap-2">
+                    {cnh ? (
+                      <span className={`text-[0.92rem] font-medium ${cnh.className}`}>
+                        {cnh.label}
+                      </span>
+                    ) : (
+                      <span className="text-[0.92rem] text-muted-foreground">Sem CNH</span>
+                    )}
+                    {cnhFile ? (
+                      <>
+                        <a
+                          href={`/api/drive/file/${cnhFile.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Visualizar CNH"
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          <FileText className="h-4 w-4" />
+                        </a>
+                        <a
+                          href={`/api/drive/file/${cnhFile.id}?download=1`}
+                          title="Baixar CNH"
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          <Download className="h-4 w-4" />
+                        </a>
+                      </>
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{colaborador.departamento || "-"}</Badge>
-                </TableCell>
-                <TableCell>
-                  <span className="text-[0.92rem] text-muted-foreground">
+                  <span
+                    className="block max-w-[240px] truncate text-[0.92rem] text-muted-foreground"
+                    title={colaborador.centroCusto || undefined}
+                  >
                     {colaborador.centroCusto || "-"}
                   </span>
                 </TableCell>
                 <TableCell>
-                  {(() => {
-                    if (!colaborador.dataVencimentoCNH) {
-                      return <span className="text-[0.92rem] text-muted-foreground">-</span>
-                    }
-
-                    const vencimento = new Date(colaborador.dataVencimentoCNH)
-                    if (Number.isNaN(vencimento.getTime())) {
-                      return <span className="text-[0.92rem] text-muted-foreground">-</span>
-                    }
-
-                    const hoje = new Date()
-                    const trintaDias = new Date(hoje.getTime() + 30 * 24 * 60 * 60 * 1000)
-                    const vencido = vencimento < hoje
-                    const vencendo = vencimento <= trintaDias && vencimento >= hoje
-                    
-                    return (
-                      <span className={`text-[0.92rem] font-medium ${vencido ? "text-destructive" : vencendo ? "text-chart-3" : "text-foreground"}`}>
-                        {vencimento.toLocaleDateString("pt-BR")}
-                        {vencido && " (Vencida)"}
-                        {vencendo && " (Vencendo)"}
-                      </span>
-                    )
-                  })()}
-                </TableCell>
-                <TableCell>
                   {assignedVehicles.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
                       {assignedVehicles.map((v) => (
-                        <Badge
-                          key={v.id}
-                          className="bg-primary/10 text-primary hover:bg-primary/20 text-xs"
-                        >
+                        <Badge key={v.id} className="bg-primary/10 text-primary hover:bg-primary/20 text-xs">
                           {v.placa}
                         </Badge>
                       ))}
+                      <span className="text-xs text-muted-foreground">
+                        {(assignedVehicles[0].km ?? 0).toLocaleString("pt-BR")} km
+                      </span>
                     </div>
                   ) : (
-                    <span className="text-[0.92rem] font-medium text-accent">
-                      Sem veículo
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="text-[0.9rem] text-muted-foreground">
-                  {assignedVehicles.length > 0 ? (
-                    <span>
-                      {(assignedVehicles[0].km ?? 0).toLocaleString("pt-BR")} km
-                    </span>
-                  ) : (
-                    <span>-</span>
+                    <span className="text-[0.92rem] text-muted-foreground">Sem veículo</span>
                   )}
                 </TableCell>
                 {canManage ? (
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreHorizontal className="h-4 w-4" />
-                          <span className="sr-only">Abrir menu</span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => onEdit(colaborador)}>
-                          <Edit className="mr-2 h-4 w-4" />
-                          Editar
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => onDelete(colaborador.id)}
-                          className="text-destructive focus:text-destructive"
-                          disabled={assignedVehicles.length > 0}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Excluir
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                  <TableCell className={`${stickyClass} right-0`}>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="Editar colaborador"
+                        onClick={() => onEdit(colaborador)}
+                      >
+                        <Edit className="h-4 w-4" />
+                        <span className="sr-only">Editar</span>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        title={
+                          assignedVehicles.length > 0
+                            ? "Desvincule o veículo antes de excluir"
+                            : "Excluir colaborador"
+                        }
+                        disabled={assignedVehicles.length > 0}
+                        onClick={() => onDelete(colaborador.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="sr-only">Excluir</span>
+                      </Button>
+                    </div>
                   </TableCell>
                 ) : null}
               </TableRow>
@@ -177,6 +207,9 @@ export function ColaboradoresTable({
           })}
         </TableBody>
       </Table>
+      <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
+        {colaboradores.length} colaborador(es) listado(s)
+      </div>
     </div>
   )
 }

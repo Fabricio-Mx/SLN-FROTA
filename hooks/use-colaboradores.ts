@@ -20,13 +20,18 @@ type ColaboradorRow = {
   id: string
   nome: string
   cpf: string
-  telefone: string
+  telefone: string | null
   email: string | null
-  departamento: string
+  departamento: string | null
+  tipo: string | null
+  segmento: string | null
   centro_custo: string | null
   cep: string | null
   endereco: string | null
   data_vencimento_cnh: string | null
+  cnh_numero: string | null
+  cnh_categoria: string | null
+  cnh_arquivos: unknown[] | null
   documentos: unknown[] | null
   imagens_veiculo: unknown[] | null
   checklist: Record<string, unknown> | null
@@ -34,7 +39,18 @@ type ColaboradorRow = {
   updated_at: string
 }
 
-const COLABORADOR_MIGRATION_COLUMNS = ["email", "centro_custo", "cep", "endereco", "imagens_veiculo"]
+const COLABORADOR_MIGRATION_COLUMNS = [
+  "email",
+  "centro_custo",
+  "cep",
+  "endereco",
+  "imagens_veiculo",
+  "tipo",
+  "segmento",
+  "cnh_numero",
+  "cnh_categoria",
+  "cnh_arquivos",
+]
 
 const getColaboradorSchemaErrorMessage = (message?: string) => {
   if (!message) return null
@@ -49,13 +65,18 @@ const mapColaboradorRow = (row: ColaboradorRow): Colaborador => {
     id: row.id,
     nome: row.nome,
     cpf: row.cpf,
-    telefone: row.telefone,
+    telefone: row.telefone || "",
     email: row.email || "",
-    departamento: row.departamento,
+    departamento: row.departamento || "",
+    tipo: row.tipo || "",
+    segmento: row.segmento || "",
     centroCusto: row.centro_custo || "",
     cep: row.cep || "",
     endereco: row.endereco || "",
     dataVencimentoCNH: row.data_vencimento_cnh || "",
+    cnhNumero: row.cnh_numero || "",
+    cnhCategoria: row.cnh_categoria || "",
+    cnhArquivos: Array.isArray(row.cnh_arquivos) ? (row.cnh_arquivos as Colaborador["cnhArquivos"]) : [],
     documentos: Array.isArray(row.documentos) ? (row.documentos as Colaborador["documentos"]) : [],
     imagensVeiculo: Array.isArray(row.imagens_veiculo) ? (row.imagens_veiculo as Colaborador["imagensVeiculo"]) : [],
     createdAt: row.created_at,
@@ -70,10 +91,15 @@ const toColaboradorRow = (formData: ColaboradorFormData): Omit<ColaboradorRow, "
     telefone: formData.telefone,
     email: formData.email,
     departamento: formData.departamento,
+    tipo: formData.tipo,
+    segmento: formData.segmento,
     centro_custo: formData.centroCusto,
     cep: formData.cep,
     endereco: formData.endereco,
-    data_vencimento_cnh: formData.dataVencimentoCNH,
+    data_vencimento_cnh: formData.dataVencimentoCNH || null,
+    cnh_numero: formData.cnhNumero,
+    cnh_categoria: formData.cnhCategoria,
+    cnh_arquivos: formData.cnhArquivos ?? [],
     documentos: formData.documentos ?? [],
     imagens_veiculo: formData.imagensVeiculo ?? [],
     checklist: null,

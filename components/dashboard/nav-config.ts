@@ -122,6 +122,15 @@ export const SIDEBAR_NAV_PALETTE: SectionNavPalette = {
   usuarios: DEFAULT_SIDEBAR_NAV_COLORS,
 }
 
+const DARK_SIDEBAR_NAV_COLORS = {
+  active: "border-transparent bg-[#7CB342] text-white hover:bg-[#8bc34a]",
+  inactive: "border-transparent bg-transparent text-white/75 hover:bg-white/10 hover:text-white",
+}
+
+export const SIDEBAR_NAV_PALETTE_DARK: SectionNavPalette = Object.fromEntries(
+  [...Object.keys(DASHBOARD_SECTION_BUTTON_STYLES), "usuarios"].map((id) => [id, DARK_SIDEBAR_NAV_COLORS])
+)
+
 export function getSectionMeta(section: DashboardSection): Pick<DashboardSectionItem, "label" | "description"> {
   const matchedSection = DASHBOARD_SECTIONS.find((item) => item.id === section)
 

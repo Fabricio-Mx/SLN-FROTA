@@ -25,7 +25,8 @@ import { AgregadosOverview } from "@/components/fleet/agregados-overview"
 import { DeleteDialog } from "@/components/fleet/delete-dialog"
 import { ColaboradoresTable } from "@/components/fleet/colaboradores-table"
 import { ColaboradoresFilters, type ColaboradorFilters } from "@/components/fleet/colaboradores-filters"
-import { ColaboradoresImportPanel } from "@/components/fleet/colaboradores-import-panel"
+import { ColaboradoresImportButton } from "@/components/fleet/colaboradores-import-button"
+import { ColaboradoresSummary } from "@/components/fleet/colaboradores-summary"
 import { ColaboradorModal } from "@/components/fleet/colaborador-modal"
 import { AssignModal } from "@/components/fleet/assign-modal"
 import {
@@ -69,6 +70,8 @@ const DEFAULT_COLABORADOR_FILTERS: ColaboradorFilters = {
   search: "",
   ordenacao: "cnh_vencimento_asc",
   statusCNH: "todos",
+  segmento: "todos",
+  centroCusto: "todos",
 }
 
 type FleetDashboardClientProps = {
@@ -298,6 +301,8 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
         colaborador.nome.toLowerCase().includes(normalizedSearch) ||
         colaborador.cpf.toLowerCase().includes(normalizedSearch) ||
         (colaborador.telefone && colaborador.telefone.includes(colaboradorFilters.search)) ||
+        colaborador.tipo?.toLowerCase().includes(normalizedSearch) ||
+        colaborador.segmento?.toLowerCase().includes(normalizedSearch) ||
         colaborador.centroCusto.toLowerCase().includes(normalizedSearch)
 
       const vencimento = new Date(colaborador.dataVencimentoCNH)
@@ -312,7 +317,13 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
         (colaboradorFilters.statusCNH === "vencendo" && vencendo) ||
         (colaboradorFilters.statusCNH === "valida" && valida)
 
-      return matchesSearch && matchesStatusCNH
+      const matchesSegmento =
+        colaboradorFilters.segmento === "todos" || colaborador.segmento === colaboradorFilters.segmento
+
+      const matchesCentroCusto =
+        colaboradorFilters.centroCusto === "todos" || colaborador.centroCusto === colaboradorFilters.centroCusto
+
+      return matchesSearch && matchesStatusCNH && matchesSegmento && matchesCentroCusto
     })
 
     result = [...result].sort((a, b) => {
@@ -334,6 +345,22 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
 
     return result
   }, [colaboradores, colaboradorFilters])
+
+  const colaboradorSegmentos = useMemo(() => {
+    const values = new Set<string>()
+    colaboradores.forEach((colaborador) => {
+      if (colaborador.segmento) values.add(colaborador.segmento)
+    })
+    return Array.from(values).sort((a, b) => a.localeCompare(b))
+  }, [colaboradores])
+
+  const colaboradorCentrosCusto = useMemo(() => {
+    const values = new Set<string>()
+    colaboradores.forEach((colaborador) => {
+      if (colaborador.centroCusto) values.add(colaborador.centroCusto)
+    })
+    return Array.from(values).sort((a, b) => a.localeCompare(b))
+  }, [colaboradores])
 
   const veiculosAgregados = useMemo(() => filteredVehicles.filter((vehicle) => isAgregadoVehicle(vehicle)), [filteredVehicles])
   const veiculosFrota = useMemo(() => filteredVehicles.filter((vehicle) => isVisibleInFrotaSection(vehicle)), [filteredVehicles])
@@ -642,12 +669,17 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       )
     }
 
-    if (resolvedInitialSection === "colaboradores" && canAddColaboradores(userRole)) {
+    if (resolvedInitialSection === "colaboradores" && (canAddColaboradores(userRole) || isMaster)) {
       return (
-        <Button onClick={handleAddColaborador} className="gap-2">
-          <Plus className="h-4 w-4" />
-          Adicionar Colaborador
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ColaboradoresImportButton isMaster={isMaster} onImported={refreshColaboradores} />
+          {canAddColaboradores(userRole) ? (
+            <Button onClick={handleAddColaborador} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Adicionar Colaborador
+            </Button>
+          ) : null}
+        </div>
       )
     }
 
@@ -822,8 +854,13 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     if (resolvedInitialSection === "colaboradores") {
       return (
         <div className="w-full space-y-4">
-          {isMaster ? <ColaboradoresImportPanel isMaster={isMaster} onImported={refreshColaboradores} /> : null}
-          <ColaboradoresFilters filters={colaboradorFilters} onFiltersChange={setColaboradorFilters} />
+          <ColaboradoresSummary colaboradores={filteredColaboradores} total={colaboradores.length} />
+          <ColaboradoresFilters
+            filters={colaboradorFilters}
+            segmentos={colaboradorSegmentos}
+            centrosCusto={colaboradorCentrosCusto}
+            onFiltersChange={setColaboradorFilters}
+          />
           <ColaboradoresTable
             colaboradores={filteredColaboradores}
             vehicles={vehicles}

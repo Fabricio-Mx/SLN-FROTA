@@ -5,79 +5,175 @@ import { createClient } from "@/lib/supabase/server"
 
 export const runtime = "nodejs"
 
+const INSERT_CHUNK_SIZE = 200
+const UPDATE_CHUNK_SIZE = 25
+
 type ImportedColaborador = {
+  tipo: string
+  segmento: string
   nome: string
-  cpf: string
+  documento: string
+  documentoDigits: string
   centroCusto: string
 }
 
 type ExistingColaborador = {
   id: string
-  cpf: string
+  nome: string
+  cpf: string | null
 }
 
-function normalizeCellValue(value: string | number | null | undefined): string {
-  if (typeof value === "string") return value.trim()
+type ColumnMap = {
+  tipo: number
+  segmento: number
+  nome: number
+  documento: number
+  centroCusto: number
+}
+
+const DEFAULT_COLUMNS: ColumnMap = { tipo: 0, segmento: 1, nome: 2, documento: 3, centroCusto: 4 }
+
+function normalizeCellValue(value: unknown): string {
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim()
   if (typeof value === "number") return String(value).trim()
   return ""
 }
 
-function normalizeCpf(value: string): string {
+function stripAccents(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+}
+
+function normalizeKey(value: string): string {
+  return stripAccents(value).toLowerCase().replace(/\s+/g, " ").trim()
+}
+
+function normalizeName(value: string): string {
+  return normalizeKey(value)
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function formatDocument(value: string): { documento: string; digits: string } {
   const digits = value.replace(/\D/g, "")
-  if (digits.length !== 11) {
-    return value.trim()
+
+  if (digits.length === 11) {
+    return { documento: digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"), digits }
   }
 
-  return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")
+  if (digits.length === 14) {
+    return { documento: digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5"), digits }
+  }
+
+  return { documento: value.trim(), digits }
 }
 
-function isHeaderRow(nome: string, cpf: string, centroCusto: string): boolean {
-  const normalizedName = nome.toLowerCase().replace(/\s+/g, "")
-  const normalizedCpf = cpf.toLowerCase().replace(/\s+/g, "")
-  const normalizedCenter = centroCusto.toLowerCase().replace(/\s+/g, "")
+function detectColumns(row: unknown[]): ColumnMap | null {
+  const headers = row.map((cell) => normalizeKey(normalizeCellValue(cell)))
+  const findIndex = (predicate: (header: string) => boolean) => headers.findIndex(predicate)
 
-  return normalizedName === "nome" && normalizedCpf === "cpf" && normalizedCenter.includes("centrodecusto")
+  const documento = findIndex((header) => header.includes("cpf") || header.includes("cnpj"))
+  const nome = findIndex(
+    (header) =>
+      header.includes("cliente") || header.includes("fornecedor") || header === "nome" || header.includes("colaborador")
+  )
+  const centroCusto = findIndex((header) => header.includes("centro"))
+
+  if (documento < 0 || nome < 0 || centroCusto < 0) {
+    return null
+  }
+
+  const tipo = findIndex((header) => header.startsWith("tipo"))
+  const segmento = findIndex((header) => header.includes("segmento"))
+
+  return {
+    tipo: tipo < 0 ? DEFAULT_COLUMNS.tipo : tipo,
+    segmento: segmento < 0 ? DEFAULT_COLUMNS.segmento : segmento,
+    nome,
+    documento,
+    centroCusto,
+  }
 }
 
-function parseSpreadsheet(buffer: Buffer): ImportedColaborador[] {
+function parseSpreadsheet(buffer: Buffer): {
+  records: ImportedColaborador[]
+  skipped: number
+  duplicates: number
+} {
   const workbook = XLSX.read(buffer, { type: "buffer", raw: false })
   const firstSheetName = workbook.SheetNames[0]
 
   if (!firstSheetName) {
-    return []
+    return { records: [], skipped: 0, duplicates: 0 }
   }
 
   const sheet = workbook.Sheets[firstSheetName]
-  const rows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
-    header: 1,
-    raw: false,
-    defval: "",
-  })
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: "" })
 
-  const deduped = new Map<string, ImportedColaborador>()
+  let columns = DEFAULT_COLUMNS
+  let startIndex = 0
 
-  for (const row of rows) {
-    const nome = normalizeCellValue(row[2])
-    const cpf = normalizeCpf(normalizeCellValue(row[3]))
-    const centroCusto = normalizeCellValue(row[4])
-
-    if (!nome && !cpf && !centroCusto) {
-      continue
+  // O cabeçalho pode não estar na primeira linha da planilha.
+  for (let index = 0; index < Math.min(rows.length, 10); index += 1) {
+    const detected = detectColumns(rows[index] ?? [])
+    if (detected) {
+      columns = detected
+      startIndex = index + 1
+      break
     }
-
-    if (isHeaderRow(nome, cpf, centroCusto)) {
-      continue
-    }
-
-    const cpfDigits = cpf.replace(/\D/g, "")
-    if (!nome || cpfDigits.length !== 11) {
-      continue
-    }
-
-    deduped.set(cpfDigits, { nome, cpf, centroCusto })
   }
 
-  return Array.from(deduped.values())
+  const deduped = new Map<string, ImportedColaborador>()
+  let skipped = 0
+  let duplicates = 0
+
+  for (let index = startIndex; index < rows.length; index += 1) {
+    const row = rows[index] ?? []
+    const tipo = normalizeCellValue(row[columns.tipo])
+    const segmento = normalizeCellValue(row[columns.segmento])
+    const nome = normalizeCellValue(row[columns.nome])
+    const { documento, digits } = formatDocument(normalizeCellValue(row[columns.documento]))
+    const centroCusto = normalizeCellValue(row[columns.centroCusto])
+
+    if (!tipo && !segmento && !nome && !documento && !centroCusto) {
+      continue
+    }
+
+    if (!nome) {
+      skipped += 1
+      continue
+    }
+
+    const key = `${digits || "sem-documento"}|${normalizeName(nome)}`
+    if (deduped.has(key)) {
+      duplicates += 1
+      continue
+    }
+
+    deduped.set(key, {
+      tipo,
+      segmento: segmento.toUpperCase(),
+      nome: nome.toUpperCase(),
+      documento,
+      documentoDigits: digits,
+      centroCusto,
+    })
+  }
+
+  return { records: Array.from(deduped.values()), skipped, duplicates }
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
+function isMissingColumnError(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return normalized.includes("tipo") || normalized.includes("segmento") || normalized.includes("centro_custo")
 }
 
 export async function POST(req: Request) {
@@ -95,83 +191,139 @@ export async function POST(req: Request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer())
-    const records = parseSpreadsheet(buffer)
+    const { records, skipped, duplicates } = parseSpreadsheet(buffer)
 
     if (records.length === 0) {
       return NextResponse.json(
-        { error: "Nenhum colaborador válido encontrado. Confira as colunas C (Nome), D (CPF) e E (Centro de Custo)." },
+        {
+          error:
+            "Nenhum colaborador válido encontrado. Confira as colunas A (Tipo), B (Segmento), C (Nome), D (CPF/CNPJ) e E (Centro de Custo).",
+        },
         { status: 400 }
       )
     }
 
     const supabase = await createClient()
-    const cpfs = records.map((record) => record.cpf)
     const { data: existingRows, error: selectError } = await supabase
       .from("fleet_colaboradores")
-      .select("id, cpf")
-      .in("cpf", cpfs)
+      .select("id, nome, cpf")
+      .limit(10000)
 
     if (selectError) {
       throw new Error(selectError.message)
     }
 
-    const existingByCpf = new Map<string, ExistingColaborador>()
-    for (const row of (existingRows ?? []) as ExistingColaborador[]) {
-      existingByCpf.set(row.cpf.replace(/\D/g, ""), row)
+    const existing = (existingRows ?? []) as ExistingColaborador[]
+    const byKey = new Map<string, ExistingColaborador>()
+    const byDocument = new Map<string, ExistingColaborador[]>()
+    const byName = new Map<string, ExistingColaborador[]>()
+
+    for (const row of existing) {
+      const digits = (row.cpf ?? "").replace(/\D/g, "")
+      const normalizedName = normalizeName(row.nome ?? "")
+
+      byKey.set(`${digits || "sem-documento"}|${normalizedName}`, row)
+
+      if (digits) {
+        byDocument.set(digits, [...(byDocument.get(digits) ?? []), row])
+      }
+      if (normalizedName) {
+        byName.set(normalizedName, [...(byName.get(normalizedName) ?? []), row])
+      }
     }
 
-    const inserts = records
-      .filter((record) => !existingByCpf.has(record.cpf.replace(/\D/g, "")))
-      .map((record) => ({
-        nome: record.nome,
-        cpf: record.cpf,
-        telefone: "",
-        email: "",
-        departamento: "",
-        centro_custo: record.centroCusto,
-        cep: "",
-        endereco: "",
-        data_vencimento_cnh: null,
-        documentos: [],
-        imagens_veiculo: [],
-        checklist: null,
-      }))
+    const usedIds = new Set<string>()
+    const toInsert: ImportedColaborador[] = []
+    const toUpdate: { id: string; record: ImportedColaborador }[] = []
 
-    if (inserts.length > 0) {
-      const { error: insertError } = await supabase.from("fleet_colaboradores").insert(inserts)
+    for (const record of records) {
+      const normalizedName = normalizeName(record.nome)
+      const key = `${record.documentoDigits || "sem-documento"}|${normalizedName}`
+
+      let match = byKey.get(key)
+
+      // Sem correspondência exata, só reaproveita o cadastro quando o documento/nome é único.
+      if (!match || usedIds.has(match.id)) {
+        const candidates = record.documentoDigits
+          ? byDocument.get(record.documentoDigits) ?? []
+          : byName.get(normalizedName) ?? []
+        const available = candidates.filter((candidate) => !usedIds.has(candidate.id))
+        match = available.length === 1 ? available[0] : undefined
+      }
+
+      if (match) {
+        usedIds.add(match.id)
+        toUpdate.push({ id: match.id, record })
+      } else {
+        toInsert.push(record)
+      }
+    }
+
+    const insertPayloads = toInsert.map((record) => ({
+      nome: record.nome,
+      cpf: record.documento,
+      tipo: record.tipo,
+      segmento: record.segmento,
+      centro_custo: record.centroCusto,
+      telefone: "",
+      email: "",
+      departamento: "",
+      cep: "",
+      endereco: "",
+      data_vencimento_cnh: null,
+      documentos: [],
+      imagens_veiculo: [],
+      checklist: null,
+    }))
+
+    for (const batch of chunk(insertPayloads, INSERT_CHUNK_SIZE)) {
+      const { error: insertError } = await supabase.from("fleet_colaboradores").insert(batch)
       if (insertError) {
-        if (insertError.message.includes("data_vencimento_cnh")) {
-          throw new Error("Execute a migration 017_allow_partial_colaborador_import.sql no Supabase antes de importar a planilha.")
+        if (insertError.message.includes("data_vencimento_cnh") || isMissingColumnError(insertError.message)) {
+          throw new Error(
+            "Execute as migrations 017_allow_partial_colaborador_import.sql e 018_add_colaborador_tipo_segmento.sql no Supabase antes de importar a planilha."
+          )
         }
         throw new Error(insertError.message)
       }
     }
 
-    const updates = records.filter((record) => existingByCpf.has(record.cpf.replace(/\D/g, "")))
-    for (const record of updates) {
-      const existing = existingByCpf.get(record.cpf.replace(/\D/g, ""))
-      if (!existing) continue
+    const timestamp = new Date().toISOString()
+    for (const batch of chunk(toUpdate, UPDATE_CHUNK_SIZE)) {
+      const results = await Promise.all(
+        batch.map(({ id, record }) =>
+          supabase
+            .from("fleet_colaboradores")
+            .update({
+              nome: record.nome,
+              cpf: record.documento,
+              tipo: record.tipo,
+              segmento: record.segmento,
+              centro_custo: record.centroCusto,
+              updated_at: timestamp,
+            })
+            .eq("id", id)
+        )
+      )
 
-      const { error: updateError } = await supabase
-        .from("fleet_colaboradores")
-        .update({
-          nome: record.nome,
-          cpf: record.cpf,
-          centro_custo: record.centroCusto,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existing.id)
-
-      if (updateError) {
-        throw new Error(updateError.message)
+      const failed = results.find((result) => result.error)
+      if (failed?.error) {
+        if (isMissingColumnError(failed.error.message)) {
+          throw new Error(
+            "Execute a migration 018_add_colaborador_tipo_segmento.sql no Supabase antes de importar a planilha."
+          )
+        }
+        throw new Error(failed.error.message)
       }
     }
 
     return NextResponse.json({
       success: true,
       imported: records.length,
-      inserted: inserts.length,
-      updated: updates.length,
+      inserted: insertPayloads.length,
+      updated: toUpdate.length,
+      duplicates,
+      skipped,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erro desconhecido"
