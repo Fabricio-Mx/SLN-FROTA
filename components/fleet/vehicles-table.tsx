@@ -20,6 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { getVehicleReviewMilestone, isVehicleDueForReview } from "@/lib/fleet-maintenance"
+import { getVehicleVisual } from "@/lib/vehicle-icons"
 import type { Vehicle, Colaborador } from "@/lib/types"
 
 interface VehiclesTableProps {
@@ -199,7 +200,7 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
 
   return (
     <div ref={wrapperRef} className="space-y-2">
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="table-scroll-hidden overflow-hidden rounded-lg border border-border bg-card">
         <Table className="min-w-[1380px]">
         <TableHeader>
           <TableRow className="bg-muted/50">
@@ -228,6 +229,8 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
             const rowHighlightClass = getRowHighlightClass(expired, expiring, index)
             const reviewMilestone = getVehicleReviewMilestone(vehicle)
             const dueForReview = isVehicleDueForReview(vehicle)
+            const vehicleVisual = getVehicleVisual(vehicle.modelo)
+            const VehicleIcon = vehicleVisual.icon
             const stickyActionClass = expired
               ? "bg-red-50/70 group-hover:bg-[#e7f4dc]"
               : expiring
@@ -239,9 +242,17 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
             return (
               <TableRow key={vehicle.id} className={`group ${rowHighlightClass}`}>
                 <TableCell className="align-middle text-left">
-                  <div className="space-y-1">
-                    <div className="font-mono text-[0.95rem] font-semibold text-foreground">{vehicle.placa}</div>
-                    <div className="text-[0.78rem] text-muted-foreground">Renavan: {vehicle.renavan || "-"}</div>
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      title={vehicleVisual.label}
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${vehicleVisual.chipClass}`}
+                    >
+                      <VehicleIcon className="h-4 w-4" />
+                    </span>
+                    <div className="space-y-1">
+                      <div className="font-mono text-[0.95rem] font-semibold text-foreground">{vehicle.placa}</div>
+                      <div className="text-[0.78rem] text-muted-foreground">Renavan: {vehicle.renavan || "-"}</div>
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell className="align-middle text-left text-[0.92rem]">
@@ -424,6 +435,9 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
           })}
         </TableBody>
         </Table>
+        <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
+          {vehicles.length} veículo(s) listado(s)
+        </div>
       </div>
       <div className={`sticky bottom-3 z-20 transition-opacity ${showStickyScrollbar ? "opacity-100" : "pointer-events-none opacity-0"}`}>
         <div

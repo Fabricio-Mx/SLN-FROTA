@@ -119,6 +119,14 @@ function normalizePlate(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "")
 }
 
+function normalizeText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+}
+
 function formatDateBR(date: Date): string {
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
@@ -232,25 +240,33 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     const thirtyDaysFromNow = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000)
-    const normalizedSearch = filters.search.trim().toLowerCase()
+    const normalizedSearch = normalizeText(filters.search)
     const normalizedPlateSearch = normalizePlate(filters.search.trim())
 
     return vehicles.filter((vehicle) => {
+      const colaboradorNome = vehicle.colaboradorId
+        ? colaboradoresById.get(vehicle.colaboradorId)?.nome ?? ""
+        : ""
       const matchesVehiclePlate =
         normalizedPlateSearch !== "" && normalizePlate(vehicle.placa).includes(normalizedPlateSearch)
       const matchesCardPlate =
         normalizedPlateSearch !== "" && normalizePlate(vehicle.placaCartaoCombustivel ?? "").includes(normalizedPlateSearch)
+      const matchesColaborador =
+        normalizedSearch !== "" && normalizeText(colaboradorNome).includes(normalizedSearch)
       const matchesGenericFields =
         normalizedSearch !== "" && (
-          vehicle.chassi.toLowerCase().includes(normalizedSearch) ||
-          vehicle.modelo.toLowerCase().includes(normalizedSearch)
+          normalizeText(vehicle.chassi ?? "").includes(normalizedSearch) ||
+          normalizeText(vehicle.modelo ?? "").includes(normalizedSearch) ||
+          normalizeText(vehicle.renavan ?? "").includes(normalizedSearch)
         )
 
       const matchesSearch =
         normalizedSearch === "" ||
-        (filters.searchScope === "todos" && (matchesVehiclePlate || matchesCardPlate || matchesGenericFields)) ||
+        (filters.searchScope === "todos" &&
+          (matchesVehiclePlate || matchesCardPlate || matchesColaborador || matchesGenericFields)) ||
         (filters.searchScope === "placa_veiculo" && matchesVehiclePlate) ||
-        (filters.searchScope === "placa_cartao" && matchesCardPlate)
+        (filters.searchScope === "placa_cartao" && matchesCardPlate) ||
+        (filters.searchScope === "colaborador" && matchesColaborador)
 
       const matchesPropriedade =
         filters.tipoPropriedade === "todos" ||
@@ -288,22 +304,25 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
 
       return matchesSearch && matchesPropriedade && matchesCartao && matchesAtribuicao && matchesStatus && matchesSituacao
     })
-  }, [vehicles, filters])
+  }, [vehicles, filters, colaboradoresById])
 
   const filteredColaboradores = useMemo(() => {
     const hoje = new Date()
     const trintaDias = new Date(hoje.getTime() + 30 * 24 * 60 * 60 * 1000)
-    const normalizedSearch = colaboradorFilters.search.trim().toLowerCase()
+    const normalizedSearch = normalizeText(colaboradorFilters.search)
+    const normalizedDocumentSearch = normalizePlate(colaboradorFilters.search)
 
     let result = colaboradores.filter((colaborador) => {
       const matchesSearch =
         normalizedSearch === "" ||
-        colaborador.nome.toLowerCase().includes(normalizedSearch) ||
-        colaborador.cpf.toLowerCase().includes(normalizedSearch) ||
-        (colaborador.telefone && colaborador.telefone.includes(colaboradorFilters.search)) ||
-        colaborador.tipo?.toLowerCase().includes(normalizedSearch) ||
-        colaborador.segmento?.toLowerCase().includes(normalizedSearch) ||
-        colaborador.centroCusto.toLowerCase().includes(normalizedSearch)
+        normalizeText(colaborador.nome).includes(normalizedSearch) ||
+        normalizeText(colaborador.cpf).includes(normalizedSearch) ||
+        (normalizedDocumentSearch !== "" && normalizePlate(colaborador.cpf).includes(normalizedDocumentSearch)) ||
+        normalizeText(colaborador.telefone || "").includes(normalizedSearch) ||
+        normalizeText(colaborador.email || "").includes(normalizedSearch) ||
+        normalizeText(colaborador.tipo || "").includes(normalizedSearch) ||
+        normalizeText(colaborador.segmento || "").includes(normalizedSearch) ||
+        normalizeText(colaborador.centroCusto || "").includes(normalizedSearch)
 
       const vencimento = new Date(colaborador.dataVencimentoCNH)
       const hasValidDate = !Number.isNaN(vencimento.getTime())

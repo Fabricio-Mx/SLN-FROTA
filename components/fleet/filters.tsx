@@ -97,7 +97,9 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
       ? "Buscar pela placa do veículo..."
       : filters.searchScope === "placa_cartao"
       ? "Buscar pela placa registrada no cartão..."
-      : "Buscar por placa do veículo, placa do cartão, chassi ou modelo..."
+      : filters.searchScope === "colaborador"
+      ? "Buscar pelo nome do colaborador..."
+      : "Buscar por placa, colaborador, modelo, chassi ou renavam..."
 
   return (
     <div className="space-y-4">
@@ -119,6 +121,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
             <SelectItem value="todos">Busca inteligente</SelectItem>
             <SelectItem value="placa_veiculo">Placa do veículo</SelectItem>
             <SelectItem value="placa_cartao">Placa do cartão</SelectItem>
+            <SelectItem value="colaborador">Colaborador</SelectItem>
           </SelectContent>
         </Select>
         <div className="relative flex-1">
@@ -183,6 +186,7 @@ export function Filters({ filters, onFiltersChange }: FiltersProps) {
                     <SelectItem value="todos">Busca inteligente</SelectItem>
                     <SelectItem value="placa_veiculo">Placa do veículo</SelectItem>
                     <SelectItem value="placa_cartao">Placa do cartão</SelectItem>
+                    <SelectItem value="colaborador">Colaborador</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

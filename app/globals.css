@@ -142,3 +142,13 @@
     min-height: 100svh;
   }
 }
+
+/* A tabela usa uma barra de rolagem flutuante propria; esconde a nativa para nao duplicar. */
+.table-scroll-hidden [data-slot="table-container"] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.table-scroll-hidden [data-slot="table-container"]::-webkit-scrollbar {
+  display: none;
+}

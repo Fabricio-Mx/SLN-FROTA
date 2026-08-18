@@ -127,7 +127,7 @@ export type MultaFormData = Omit<Multa, 'id' | 'createdAt' | 'updatedAt'>
 
 export interface VehicleFilters {
   search: string
-  searchScope: 'todos' | 'placa_veiculo' | 'placa_cartao'
+  searchScope: 'todos' | 'placa_veiculo' | 'placa_cartao' | 'colaborador'
   tipoPropriedade: 'todos' | 'alugado' | 'proprio'
   cartaoCombustivel: 'todos' | 'veloe' | 'ticket' | 'ambos'
   atribuicao: 'todos' | 'atribuido' | 'disponivel'
