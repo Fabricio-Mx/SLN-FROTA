@@ -1,8 +1,8 @@
+import { DashboardClientShell } from "@/app/(protected)/dashboard/page-client-shell"
 import { getDashboardInitialUser } from "@/app/(protected)/dashboard/get-initial-user"
-import { redirect } from "next/navigation"
 
 export default async function AggregatedVehiclesPage() {
-  await getDashboardInitialUser()
+  const initialUser = await getDashboardInitialUser()
 
-  redirect("/dashboard/veiculos-frota")
+  return <DashboardClientShell initialUser={initialUser} initialSection="veiculos-agregados" />
 }

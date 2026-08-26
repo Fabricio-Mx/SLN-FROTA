@@ -47,6 +47,7 @@ type VehicleRow = {
   agregado_ano_modelo?: string | null
   agregado_data_inicial?: string | null
   agregado_dias?: number | null
+  agregado_observacao?: string | null
   colaborador_id: string | null
   imagens: unknown[] | null
   checklists: unknown[] | null
@@ -85,6 +86,7 @@ const mapVehicleRow = (row: VehicleRow): Vehicle => {
     agregadoAnoModelo: row.agregado_ano_modelo || null,
     agregadoDataInicial: row.agregado_data_inicial || null,
     agregadoDias: row.agregado_dias ?? null,
+    agregadoObservacao: row.agregado_observacao || null,
     colaboradorId: row.colaborador_id || null,
     imagens: Array.isArray(row.imagens) ? (row.imagens as Vehicle["imagens"]) : [],
     checklists: Array.isArray(row.checklists) ? (row.checklists as Vehicle["checklists"]) : [],
@@ -166,6 +168,7 @@ const toVehicleRow = (formData: VehicleFormData, includeExtendedAgregadoFields =
   const agregadoAnoModelo = formData.agregadoAnoModelo?.trim() ? formData.agregadoAnoModelo : null
   const agregadoDataInicial = formData.agregadoDataInicial?.trim() ? formData.agregadoDataInicial : null
   const agregadoDias = typeof formData.agregadoDias === "number" && formData.agregadoDias > 0 ? formData.agregadoDias : null
+  const agregadoObservacao = formData.agregadoObservacao?.trim() ? formData.agregadoObservacao.trim() : null
 
   const basePayload: VehiclePayload = {
     placa: formData.placa,
@@ -196,6 +199,7 @@ const toVehicleRow = (formData: VehicleFormData, includeExtendedAgregadoFields =
     agregado_ano_modelo: includeExtendedAgregadoFields ? agregadoAnoModelo : undefined,
     agregado_data_inicial: includeExtendedAgregadoFields ? agregadoDataInicial : undefined,
     agregado_dias: includeExtendedAgregadoFields ? agregadoDias : undefined,
+    agregado_observacao: includeExtendedAgregadoFields ? agregadoObservacao : undefined,
     colaborador_id: formData.colaboradorId ?? null,
     imagens: formData.imagens ?? [],
     checklists: formData.checklists ?? [],
@@ -404,6 +408,10 @@ export function useVehicles(enabled = true) {
     return vehicles.find((v) => v.id === id)
   }
 
+  const refreshVehicles = async (): Promise<void> => {
+    await mutate(SWR_KEY)
+  }
+
   return {
     vehicles,
     isLoading,
@@ -412,5 +420,6 @@ export function useVehicles(enabled = true) {
     updateVehicle,
     deleteVehicle,
     getVehicleById,
+    refreshVehicles,
   }
 }

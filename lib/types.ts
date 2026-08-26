@@ -48,6 +48,7 @@ export interface Vehicle {
   agregadoAnoModelo?: string | null
   agregadoDataInicial?: string | null
   agregadoDias?: number | null
+  agregadoObservacao?: string | null
   colaboradorId?: string | null
   imagens?: DriveFile[]
   checklists?: DriveFile[]

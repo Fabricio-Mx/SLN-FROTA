@@ -6,6 +6,9 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  outputFileTracingIncludes: {
+    "/api/agregados/export": ["./public/templates/**"],
+  },
 }
 
 export default nextConfig

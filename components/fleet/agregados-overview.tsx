@@ -1,23 +1,22 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import {
-  Building2,
-  CalendarClock,
   CalendarDays,
   CarFront,
   ClipboardList,
   Download,
-  FileClock,
+  FileSignature,
+  Loader2,
   MoreHorizontal,
-  Plus,
   Search,
+  Upload,
   Wallet,
+  X,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
@@ -35,7 +34,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { getVehicleVisual } from "@/lib/vehicle-icons"
+import { cn } from "@/lib/utils"
+import { toast } from "@/hooks/use-toast"
 import type { Colaborador, Vehicle } from "@/lib/types"
 
 interface AgregadosOverviewProps {
@@ -43,9 +44,9 @@ interface AgregadosOverviewProps {
   colaboradores: Colaborador[]
   approverName?: string
   canManage?: boolean
-  onAdd?: () => void
   onEdit: (vehicle: Vehicle) => void
   onDelete: (id: string) => void
+  onImported?: () => void | Promise<void>
 }
 
 type OverviewRow = {
@@ -60,13 +61,14 @@ type OverviewRow = {
   dias: number
   valorDia: number
   valorTotal: number
+  observacao: string
 }
 
 type ContractFilter = "todos" | "assinado" | "pendente" | "renovar"
 type SortOption = "vencimento_asc" | "vencimento_desc" | "valor_desc" | "colaborador_asc"
 
 const BILLING_CYCLE_DAYS = 30
-const EXPIRING_WINDOW_DAYS = 5
+const EXPIRING_WINDOW_DAYS = 30
 
 function parseDate(value: string | null | undefined): Date | null {
   if (!value) return null
@@ -78,10 +80,7 @@ function parseDate(value: string | null | undefined): Date | null {
 }
 
 function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(value)
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value)
 }
 
 function formatDate(value: Date): string {
@@ -89,24 +88,29 @@ function formatDate(value: Date): string {
 }
 
 function toIsoDate(value: Date): string {
-  return value.toISOString().slice(0, 10)
+  const year = value.getFullYear()
+  const month = `${value.getMonth() + 1}`.padStart(2, "0")
+  const day = `${value.getDate()}`.padStart(2, "0")
+  return `${year}-${month}-${day}`
 }
 
 function formatCompetencia(value: Date): string {
-  return new Intl.DateTimeFormat("pt-BR", {
-    month: "short",
-    year: "numeric",
-  })
-    .format(value)
-    .replace(".", "")
+  return new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(value)
 }
 
 function toUpperLabel(value: string): string {
   return value.trim() ? value.trim().toUpperCase() : "NÃO INFORMADO"
 }
 
-function getAnoModelo(modelo: string): string {
-  const matches = modelo.match(/\b(?:19|20)\d{2}\b/g)
+function getAnoModelo(vehicle: Vehicle): string {
+  if (vehicle.agregadoAnoModelo?.trim()) return vehicle.agregadoAnoModelo.trim()
+
+  // Sem a migration 004 o ano/modelo do agregado fica gravado no campo chassi.
+  if (vehicle.chassi && /^\s*(?:19|20)\d{2}\s*\/\s*(?:19|20)\d{2}\s*$/.test(vehicle.chassi)) {
+    return vehicle.chassi.trim()
+  }
+
+  const matches = vehicle.modelo.match(/\b(?:19|20)\d{2}\b/g)
   if (!matches || matches.length === 0) return "N/I"
   if (matches.length === 1) return matches[0]
   return `${matches[0]}/${matches[1]}`
@@ -125,18 +129,6 @@ function getInitialDate(vehicle: Vehicle, endDate: Date): Date {
   const storedDate = parseDate(vehicle.agregadoDataInicial ?? vehicle.dataVencimentoCNHAgregado)
   if (storedDate) return storedDate
   return new Date(endDate.getFullYear(), endDate.getMonth(), 1)
-}
-
-function addMonths(baseDate: Date, months: number): Date {
-  return new Date(baseDate.getFullYear(), baseDate.getMonth() + months, 1)
-}
-
-function getMonthEnd(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0)
-}
-
-function overlapsRange(startDate: Date, endDate: Date, rangeStart: Date, rangeEnd: Date): boolean {
-  return startDate <= rangeEnd && endDate >= rangeStart
 }
 
 function normalizeSearch(value: string): string {
@@ -159,116 +151,75 @@ function buildRows(vehicles: Vehicle[], colaboradores: Colaborador[]): OverviewR
       ? vehicle.km
       : Math.max(1, Math.round((dataFinal.getTime() - dataInicial.getTime()) / 86_400_000) + 1)
     const valorDia = vehicle.mensalidade > 0 ? vehicle.mensalidade / BILLING_CYCLE_DAYS : 0
-    const valorTotal = valorDia * dias
 
     return {
       vehicle,
-      colaboradorNome: vehicle.agregadoColaboradorNome ?? vehicle.cpfAgregado ?? colaborador?.nome ?? "Sem colaborador",
-      funcao: toUpperLabel(vehicle.agregadoFuncao ?? vehicle.tipoContratacao ?? colaborador?.departamento ?? "Não informado"),
-      centroCusto: toUpperLabel(vehicle.agregadoCentroCusto ?? vehicle.empresaLocacao ?? colaborador?.departamento ?? "Sem centro de custo"),
-      contrato: vehicle.agregadoContrato ?? (vehicle.checklists?.length ? "ASSINADO" : "PENDENTE"),
-      anoModelo: vehicle.agregadoAnoModelo ?? vehicle.chassi ?? getAnoModelo(vehicle.modelo),
+      colaboradorNome: colaborador?.nome ?? vehicle.agregadoColaboradorNome ?? vehicle.cpfAgregado ?? "Sem colaborador",
+      funcao: toUpperLabel(vehicle.agregadoFuncao ?? colaborador?.departamento ?? vehicle.tipoContratacao ?? ""),
+      centroCusto: toUpperLabel(vehicle.agregadoCentroCusto ?? colaborador?.centroCusto ?? vehicle.empresaLocacao ?? ""),
+      contrato: (vehicle.agregadoContrato ?? (vehicle.checklists?.length ? "ASSINADO" : "PENDENTE")).toUpperCase(),
+      anoModelo: getAnoModelo(vehicle),
       dataInicial,
       dataFinal,
       dias,
       valorDia,
-      valorTotal,
+      valorTotal: valorDia * dias,
+      observacao: vehicle.agregadoObservacao?.trim() ?? "",
     }
   })
 }
 
-const chartConfig = {
-  total: {
-    label: "Total",
-    color: "#6ea93c",
-  },
-  competencia: {
-    label: "Competência",
-    color: "#c49b2e",
-  },
+function getContractBadgeClass(contrato: string): string {
+  if (contrato.includes("ASSINADO")) return "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50"
+  if (contrato.includes("RENOVAR")) return "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-50"
+  return "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-50"
 }
 
-const spreadsheetHeadClass = "h-12 border-b border-r border-[#d7e5cf] bg-gradient-to-b from-[#f6fbf1] to-[#edf6e5] px-4 text-[12.5px] font-extrabold uppercase tracking-[0.14em] text-[#486235] last:border-r-0"
-const spreadsheetCellClass = "border-r border-[#edf1ea] px-4 py-3.5 text-[14px] text-slate-700 last:border-r-0"
+const statCardVariants = {
+  total: {
+    cardClass: "border-[#ddd1f5] bg-[linear-gradient(180deg,#f5f0ff_0%,#ece4fb_100%)] shadow-[0_10px_24px_rgba(124,58,237,0.10)]",
+    iconClass: "border-[#ccb5fa] bg-[#ede2ff] text-[#5b1fc7]",
+    glowClass: "bg-[#c3b0f2]/22",
+  },
+  veiculos: {
+    cardClass: "border-[#c9e6f6] bg-[linear-gradient(180deg,#edf9ff_0%,#e1f3fb_100%)] shadow-[0_10px_24px_rgba(15,142,207,0.10)]",
+    iconClass: "border-[#a7d8f0] bg-[#def4ff] text-[#095f89]",
+    glowClass: "bg-[#98d7f0]/24",
+  },
+  contratos: {
+    cardClass: "border-[#cfe7d8] bg-[linear-gradient(180deg,#eaf7ef_0%,#dff2e7_100%)] shadow-[0_10px_24px_rgba(90,145,110,0.10)]",
+    iconClass: "border-[#afdcc0] bg-[#e1f5e9] text-[#18663b]",
+    glowClass: "bg-[#95cfaa]/24",
+  },
+  vencendo: {
+    cardClass: "border-[#ebd1d5] bg-[linear-gradient(180deg,#f9ebed_0%,#f3dfe3_100%)] shadow-[0_10px_24px_rgba(183,96,109,0.10)]",
+    iconClass: "border-[#edb7c0] bg-[#ffe6ea] text-[#b93449]",
+    glowClass: "bg-[#e9a8b1]/22",
+  },
+} as const
 
 export function AgregadosOverview({
   vehicles,
   colaboradores,
   approverName,
   canManage,
-  onAdd,
   onEdit,
   onDelete,
+  onImported,
 }: AgregadosOverviewProps) {
   const rows = useMemo(() => buildRows(vehicles, colaboradores), [vehicles, colaboradores])
   const referenceMonth = useMemo(() => getReferenceMonth(vehicles), [vehicles])
-  const topScrollbarRef = useRef<HTMLDivElement | null>(null)
-  const tableRegionRef = useRef<HTMLDivElement | null>(null)
-  const [tableScrollWidth, setTableScrollWidth] = useState(1320)
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const stickyScrollbarRef = useRef<HTMLDivElement | null>(null)
+  const importInputRef = useRef<HTMLInputElement | null>(null)
+  const [stickyScrollWidth, setStickyScrollWidth] = useState(0)
+  const [showStickyScrollbar, setShowStickyScrollbar] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [search, setSearch] = useState("")
   const [selectedCenterCost, setSelectedCenterCost] = useState("todos")
   const [selectedContract, setSelectedContract] = useState<ContractFilter>("todos")
   const [sortBy, setSortBy] = useState<SortOption>("vencimento_asc")
-
-  useEffect(() => {
-    const topScrollbar = topScrollbarRef.current
-    const tableRegion = tableRegionRef.current
-    const tableScroller = tableRegion?.querySelector<HTMLDivElement>('[data-slot="table-container"]')
-    if (!topScrollbar || !tableRegion || !tableScroller) return
-
-    const updateWidths = () => {
-      const tableElement = tableScroller.querySelector("table")
-      const nextWidth = Math.max(
-        tableScroller.scrollWidth,
-        Math.ceil(tableElement?.getBoundingClientRect().width ?? 0),
-      )
-
-      setTableScrollWidth(nextWidth)
-      topScrollbar.scrollLeft = tableScroller.scrollLeft
-    }
-
-    let isSyncing = false
-
-    const syncFromTop = () => {
-      if (isSyncing) return
-      isSyncing = true
-      tableScroller.scrollLeft = topScrollbar.scrollLeft
-      isSyncing = false
-    }
-
-    const syncFromTable = () => {
-      if (isSyncing) return
-      isSyncing = true
-      topScrollbar.scrollLeft = tableScroller.scrollLeft
-      isSyncing = false
-    }
-
-    updateWidths()
-    topScrollbar.addEventListener("scroll", syncFromTop, { passive: true })
-    tableScroller.addEventListener("scroll", syncFromTable, { passive: true })
-
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", updateWidths)
-      return () => {
-        topScrollbar.removeEventListener("scroll", syncFromTop)
-        tableScroller.removeEventListener("scroll", syncFromTable)
-        window.removeEventListener("resize", updateWidths)
-      }
-    }
-
-    const observer = new ResizeObserver(() => updateWidths())
-    observer.observe(tableScroller)
-    observer.observe(tableRegion)
-
-    const tableElement = tableScroller.querySelector("table")
-    if (tableElement) observer.observe(tableElement)
-
-    return () => {
-      topScrollbar.removeEventListener("scroll", syncFromTop)
-      tableScroller.removeEventListener("scroll", syncFromTable)
-      observer.disconnect()
-    }
-  }, [rows.length])
 
   const centerCostOptions = useMemo(() => {
     return Array.from(new Set(rows.map((row) => row.centroCusto))).sort((left, right) => left.localeCompare(right, "pt-BR"))
@@ -280,283 +231,296 @@ export function AgregadosOverview({
     const searchedRows = !query
       ? rows
       : rows.filter((row) => {
-      const haystack = [
-        row.colaboradorNome,
-        row.funcao,
-        row.vehicle.placa,
-        row.contrato,
-        row.centroCusto,
-        row.vehicle.modelo,
-        row.anoModelo,
-      ]
-        .map((value) => normalizeSearch(value))
-        .join(" ")
+          const haystack = [
+            row.colaboradorNome,
+            row.funcao,
+            row.vehicle.placa,
+            row.contrato,
+            row.centroCusto,
+            row.vehicle.modelo,
+            row.anoModelo,
+            row.observacao,
+          ]
+            .map((value) => normalizeSearch(value))
+            .join(" ")
 
-      return haystack.includes(query)
-      })
+          return haystack.includes(query)
+        })
 
     const constrainedRows = searchedRows.filter((row) => {
       const matchesCenterCost = selectedCenterCost === "todos" || row.centroCusto === selectedCenterCost
-      const matchesContract = selectedContract === "todos" || row.contrato.toLowerCase() === selectedContract
+      const matchesContract = selectedContract === "todos" || normalizeSearch(row.contrato).includes(selectedContract)
 
       return matchesCenterCost && matchesContract
     })
 
     return [...constrainedRows].sort((left, right) => {
-      if (sortBy === "vencimento_desc") {
-        return right.dataFinal.getTime() - left.dataFinal.getTime()
-      }
-
-      if (sortBy === "valor_desc") {
-        return right.valorTotal - left.valorTotal
-      }
-
-      if (sortBy === "colaborador_asc") {
-        return left.colaboradorNome.localeCompare(right.colaboradorNome, "pt-BR")
-      }
-
+      if (sortBy === "vencimento_desc") return right.dataFinal.getTime() - left.dataFinal.getTime()
+      if (sortBy === "valor_desc") return right.valorTotal - left.valorTotal
+      if (sortBy === "colaborador_asc") return left.colaboradorNome.localeCompare(right.colaboradorNome, "pt-BR")
       return left.dataFinal.getTime() - right.dataFinal.getTime()
     })
   }, [rows, search, selectedCenterCost, selectedContract, sortBy])
 
   const summary = useMemo(() => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const expiringThreshold = new Date(today.getTime() + EXPIRING_WINDOW_DAYS * 86_400_000)
+
     const totalToPay = filteredRows.reduce((acc, row) => acc + row.valorTotal, 0)
-    const totalDaysUsed = filteredRows.reduce((acc, row) => acc + row.dias, 0)
-    const averageDailyValue = totalDaysUsed > 0 ? totalToPay / totalDaysUsed : 0
-    const expiringThreshold = new Date()
-    expiringThreshold.setHours(23, 59, 59, 999)
-    expiringThreshold.setDate(expiringThreshold.getDate() + EXPIRING_WINDOW_DAYS)
-
-    const expiringRows = filteredRows
-      .filter((row) => row.dataFinal >= new Date() && row.dataFinal <= expiringThreshold)
-      .sort((a, b) => a.dataFinal.getTime() - b.dataFinal.getTime())
-
-    const chartData = filteredRows.reduce<Array<{ centroCusto: string; total: number }>>((acc, row) => {
-      const existing = acc.find((item) => item.centroCusto === row.centroCusto)
-      if (existing) {
-        existing.total += row.valorTotal
-        return acc
-      }
-
-      acc.push({ centroCusto: row.centroCusto, total: row.valorTotal })
-      return acc
-    }, [])
-
-    const monthBase = new Date(referenceMonth.getFullYear(), referenceMonth.getMonth(), 1)
-    const timelineData = Array.from({ length: 4 }, (_, index) => {
-      const monthStart = addMonths(monthBase, index)
-      const monthEnd = getMonthEnd(monthStart)
-      const matchingRows = filteredRows.filter((row) => overlapsRange(row.dataInicial, row.dataFinal, monthStart, monthEnd))
-
-      return {
-        competencia: formatCompetencia(monthStart).replace(/^./, (char) => char.toUpperCase()),
-        total: matchingRows.reduce((acc, row) => acc + row.valorTotal, 0),
-        contratos: matchingRows.length,
-      }
-    })
+    const totalDays = filteredRows.reduce((acc, row) => acc + row.dias, 0)
 
     return {
       totalToPay,
-      averageDailyValue,
-      activeVehicles: filteredRows.length,
-      expiringRows,
-      chartData: chartData.sort((a, b) => b.total - a.total).slice(0, 6),
-      timelineData,
+      averageDailyValue: totalDays > 0 ? totalToPay / totalDays : 0,
+      totalVehicles: filteredRows.length,
+      signedContracts: filteredRows.filter((row) => row.contrato.includes("ASSINADO")).length,
+      expiringContracts: filteredRows.filter((row) => row.dataFinal >= today && row.dataFinal <= expiringThreshold).length,
     }
-  }, [filteredRows, referenceMonth])
+  }, [filteredRows])
 
   const paymentDateLabel = useMemo(() => {
-    const paymentDate = new Date(referenceMonth.getFullYear(), referenceMonth.getMonth(), 27)
-    return formatDate(paymentDate)
+    return formatDate(new Date(referenceMonth.getFullYear(), referenceMonth.getMonth(), 27))
   }, [referenceMonth])
 
-  const exportRows = () => {
-    const csvHeader = [
-      "Colaborador",
-      "Função",
-      "Placa",
-      "Contrato",
-      "Centro de Custo",
-      "Veículo",
-      "Ano/Modelo",
-      "Valor Locação",
-      "Data Inicial",
-      "Data Final",
-      "Dias",
-      "Valor Dia",
-      "Valor",
-    ]
+  const hasActiveFilters = search.trim() !== "" || selectedCenterCost !== "todos" || selectedContract !== "todos"
 
-    const csvRows = filteredRows.map((row) => [
-      row.colaboradorNome,
-      row.funcao,
-      row.vehicle.placa,
-      row.contrato,
-      row.centroCusto,
-      row.vehicle.modelo,
-      row.anoModelo,
-      row.vehicle.mensalidade.toFixed(2),
-      toIsoDate(row.dataInicial),
-      toIsoDate(row.dataFinal),
-      String(row.dias),
-      row.valorDia.toFixed(2),
-      row.valorTotal.toFixed(2),
-    ])
-
-    const csvContent = [csvHeader, ...csvRows]
-      .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(";"))
-      .join("\n")
-
-    const blob = new Blob([`\uFEFF${csvContent}`], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement("a")
-    anchor.href = url
-    anchor.download = `veiculos-agregados-${toIsoDate(new Date())}.csv`
-    anchor.click()
-    URL.revokeObjectURL(url)
+  const clearFilters = () => {
+    setSearch("")
+    setSelectedCenterCost("todos")
+    setSelectedContract("todos")
   }
 
+  useEffect(() => {
+    const wrapperElement = wrapperRef.current
+    const stickyScrollbarElement = stickyScrollbarRef.current
+    const tableContainer = wrapperElement?.querySelector<HTMLElement>("[data-slot='table-container']")
+
+    if (!stickyScrollbarElement || !tableContainer) return
+
+    let syncingFromTable = false
+    let syncingFromSticky = false
+
+    const syncMetrics = () => {
+      setStickyScrollWidth(tableContainer.scrollWidth)
+      setShowStickyScrollbar(tableContainer.scrollWidth > tableContainer.clientWidth)
+      stickyScrollbarElement.scrollLeft = tableContainer.scrollLeft
+    }
+
+    const handleTableScroll = () => {
+      if (syncingFromSticky) {
+        syncingFromSticky = false
+        return
+      }
+      syncingFromTable = true
+      stickyScrollbarElement.scrollLeft = tableContainer.scrollLeft
+    }
+
+    const handleStickyScroll = () => {
+      if (syncingFromTable) {
+        syncingFromTable = false
+        return
+      }
+      syncingFromSticky = true
+      tableContainer.scrollLeft = stickyScrollbarElement.scrollLeft
+    }
+
+    syncMetrics()
+    tableContainer.addEventListener("scroll", handleTableScroll)
+    stickyScrollbarElement.addEventListener("scroll", handleStickyScroll)
+
+    const resizeObserver = new ResizeObserver(syncMetrics)
+    resizeObserver.observe(tableContainer)
+    const tableElement = tableContainer.querySelector("table")
+    if (tableElement) resizeObserver.observe(tableElement)
+
+    window.addEventListener("resize", syncMetrics)
+
+    return () => {
+      tableContainer.removeEventListener("scroll", handleTableScroll)
+      stickyScrollbarElement.removeEventListener("scroll", handleStickyScroll)
+      resizeObserver.disconnect()
+      window.removeEventListener("resize", syncMetrics)
+    }
+  }, [filteredRows.length, canManage])
+
+  const handleImport = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+
+    setImporting(true)
+
+    try {
+      const body = new FormData()
+      body.append("file", files[0])
+
+      const response = await fetch("/api/agregados/import", { method: "POST", body })
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Falha ao importar a planilha.")
+      }
+
+      await onImported?.()
+
+      if (data?.legacyMode) {
+        toast({
+          title: "Importado em modo compatível",
+          description:
+            "O banco está sem as colunas de agregados. Rode os scripts 004_add_agregado_fields.sql e 020_add_agregado_observacao.sql no Supabase para salvar contrato e observação.",
+        })
+        return
+      }
+
+      toast({
+        title: "Planilha importada",
+        description: `${data?.inserted ?? 0} novos, ${data?.updated ?? 0} atualizados e ${data?.linked ?? 0} vinculados a colaboradores.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao importar a planilha.",
+        variant: "destructive",
+      })
+    } finally {
+      setImporting(false)
+      if (importInputRef.current) importInputRef.current.value = ""
+    }
+  }
+
+  const handleExport = async () => {
+    setExporting(true)
+
+    try {
+      const response = await fetch("/api/agregados/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          competencia: toIsoDate(referenceMonth),
+          rows: filteredRows.map((row) => ({
+            colaborador: row.colaboradorNome,
+            funcao: row.funcao,
+            contrato: row.contrato,
+            centroCusto: row.centroCusto,
+            veiculo: row.vehicle.modelo,
+            placa: row.vehicle.placa,
+            anoModelo: row.anoModelo,
+            valorLocacao: row.vehicle.mensalidade,
+            dias: row.dias,
+            observacao: row.observacao,
+          })),
+        }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data?.error || "Falha ao exportar a planilha.")
+      }
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `AGREGADOS_${toIsoDate(new Date())}.xlsx`
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Falha ao exportar a planilha.",
+        variant: "destructive",
+      })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const statCards = [
+    {
+      key: "total",
+      label: "Total a Pagar",
+      value: formatCurrency(summary.totalToPay),
+      helperText: `Competência ${formatCompetencia(referenceMonth)}`,
+      secondaryHelperText: `${formatCurrency(summary.averageDailyValue)} por dia (média)`,
+      icon: Wallet,
+      variant: statCardVariants.total,
+    },
+    {
+      key: "veiculos",
+      label: "Veículos Agregados",
+      value: String(summary.totalVehicles),
+      helperText: `${rows.length} cadastrados no total`,
+      secondaryHelperText: null,
+      icon: CarFront,
+      variant: statCardVariants.veiculos,
+    },
+    {
+      key: "contratos",
+      label: "Contratos Assinados",
+      value: String(summary.signedContracts),
+      helperText: `${Math.max(summary.totalVehicles - summary.signedContracts, 0)} pendentes de assinatura`,
+      secondaryHelperText: null,
+      icon: FileSignature,
+      variant: statCardVariants.contratos,
+    },
+    {
+      key: "vencendo",
+      label: "Contratos a Vencer",
+      value: String(summary.expiringContracts),
+      helperText: `Próximos ${EXPIRING_WINDOW_DAYS} dias`,
+      secondaryHelperText: null,
+      icon: CalendarDays,
+      variant: statCardVariants.vencendo,
+    },
+  ]
+
   return (
-    <div className="space-y-5">
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="overflow-hidden border-[#d8dfd1] bg-[#faf9f4] shadow-sm">
-          <div className="border-b border-[#d6decf] bg-[#f1f0e9] px-5 py-3 text-xs font-extrabold uppercase tracking-[0.18em] text-[#313131]">
-            Total a pagar
-          </div>
-          <CardContent className="space-y-3 p-5">
-            <div>
-              <p className="text-4xl font-black tracking-tight text-[#b13d31]">{formatCurrency(summary.totalToPay)}</p>
-              <p className="mt-1 text-sm text-slate-500">Competência {formatCompetencia(referenceMonth)}</p>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-slate-600">
-              <Wallet className="h-4 w-4 text-[#727272]" />
-              <span>{formatCurrency(summary.averageDailyValue)}/dia médio</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="overflow-hidden border-[#d8dfd1] bg-[#faf9f4] shadow-sm">
-          <div className="border-b border-[#d6decf] bg-[#f1f0e9] px-5 py-3 text-xs font-extrabold uppercase tracking-[0.18em] text-[#313131]">
-            Veículos ativos
-          </div>
-          <CardContent className="space-y-3 p-5">
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <p className="text-4xl font-black tracking-tight text-[#5e91a4]">{summary.activeVehicles}</p>
-                <p className="mt-1 text-sm text-slate-500">Agregados em acompanhamento</p>
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {statCards.map((card) => (
+          <Card key={card.key} className={cn("relative overflow-hidden rounded-[1.35rem] border", card.variant.cardClass)}>
+            <div className={cn("absolute -right-3 -top-3 h-12 w-12 rounded-full blur-2xl", card.variant.glowClass)} />
+            <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(255,255,255,0.7),rgba(255,255,255,0),rgba(255,255,255,0.55))]" />
+            <CardContent className="relative flex min-h-[98px] items-start gap-3 p-4 sm:p-4.5">
+              <div
+                className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-[0.95rem] border border-white/70 shadow-sm",
+                  card.variant.iconClass
+                )}
+              >
+                <card.icon className="h-4 w-4" />
               </div>
-              <div className="rounded-full bg-[#d7e7ee] p-2.5 text-[#5e91a4]">
-                <CarFront className="h-5 w-5" />
+              <div className="min-w-0 flex-1 pt-0.5">
+                <p className="text-[1.7rem] font-extrabold leading-none tracking-[-0.03em] text-slate-900">{card.value}</p>
+                <p className="mt-1.5 text-[0.9rem] font-semibold leading-tight text-slate-700">{card.label}</p>
+                <p className="mt-1 text-[0.76rem] leading-tight text-slate-500">{card.helperText}</p>
+                {card.secondaryHelperText ? (
+                  <p className="mt-1 text-[0.76rem] leading-tight text-slate-500">{card.secondaryHelperText}</p>
+                ) : null}
               </div>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-slate-600">
-              <div className="h-2.5 w-10 rounded-full bg-[#d3e2b9]" />
-              <span>{filteredRows.length} registros no filtro atual</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="overflow-hidden border-[#d8dfd1] bg-[#faf9f4] shadow-sm">
-          <div className="border-b border-[#d6decf] bg-[#f1f0e9] px-5 py-3 text-xs font-extrabold uppercase tracking-[0.18em] text-[#313131]">
-            Contratos expirando
-          </div>
-          <CardContent className="space-y-3 p-5">
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <p className="text-4xl font-black tracking-tight text-[#b98525]">{summary.expiringRows.length}</p>
-                <p className="mt-1 text-sm text-slate-500">Próximos {EXPIRING_WINDOW_DAYS} dias</p>
-              </div>
-              <div className="rounded-full bg-[#f2e7c7] p-2.5 text-[#b98525]">
-                <FileClock className="h-5 w-5" />
-              </div>
-            </div>
-            <div className="space-y-1.5 text-sm text-slate-600">
-              {summary.expiringRows.slice(0, 2).map((row) => (
-                <div key={row.vehicle.id} className="flex items-center justify-between gap-3">
-                  <span className="truncate font-medium text-slate-700">{row.vehicle.placa}</span>
-                  <span className="shrink-0 text-xs uppercase tracking-[0.12em] text-slate-500">{formatDate(row.dataFinal)}</span>
-                </div>
-              ))}
-              {summary.expiringRows.length === 0 ? <span>Nenhum contrato perto do vencimento.</span> : null}
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-        <Card className="border-[#d8dfd1] bg-[#faf9f4] shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">Custos por centro de custo</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <ChartContainer className="h-[220px] w-full" config={chartConfig}>
-              <BarChart accessibilityLayer data={summary.chartData} margin={{ left: 8, right: 8, top: 16 }}>
-                <CartesianGrid vertical={false} />
-                <XAxis
-                  dataKey="centroCusto"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  interval={0}
-                  tickFormatter={(value: string) => (value.length > 12 ? `${value.slice(0, 12)}...` : value)}
-                />
-                <YAxis tickLine={false} axisLine={false} tickFormatter={(value: number) => `R$ ${value.toLocaleString("pt-BR")}`} />
-                <ChartTooltip cursor={false} content={<ChartTooltipContent formatter={(value) => formatCurrency(Number(value))} />} />
-                <Bar dataKey="total" fill="var(--color-total)" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ChartContainer>
-          </CardContent>
-        </Card>
-
-        <Card className="border-[#d8dfd1] bg-[#faf9f4] shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">Contratos expirando</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-0">
-            {summary.expiringRows.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-[#d6decf] bg-white/70 px-4 py-10 text-center text-sm text-slate-500">
-                Nenhum contrato vence nos próximos {EXPIRING_WINDOW_DAYS} dias.
-              </div>
-            ) : (
-              summary.expiringRows.slice(0, 6).map((row) => (
-                <div key={row.vehicle.id} className="flex items-start justify-between gap-3 rounded-xl border border-[#e2e6dc] bg-white/80 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-900">{row.vehicle.placa} · {row.colaboradorNome}</p>
-                    <p className="truncate text-sm text-slate-500">{row.vehicle.modelo}</p>
-                  </div>
-                  <Badge variant="outline" className="shrink-0 border-[#e6d4a7] bg-[#faf3dd] text-[#9a741a]">
-                    {formatDate(row.dataFinal)}
-                  </Badge>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,0.75fr)]">
-      <Card className="border-[#d8dfd1] shadow-sm">
-        <CardHeader className="flex flex-col gap-4 border-b border-border/70 pb-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle className="text-2xl font-semibold text-foreground">Veículos Agregados</CardTitle>
-            <p className="mt-1 text-[0.98rem] text-muted-foreground">Controle mensal de locação, período de uso e vínculo com colaborador.</p>
+      <div className="rounded-lg border border-border bg-card p-3 sm:p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar por colaborador, placa, veículo, função ou centro de custo"
+              className="h-10 pl-9"
+            />
           </div>
-          <div className="flex flex-wrap gap-2 self-start">
-            <div className="relative min-w-[240px] flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar colaborador, placa, função ou centro de custo"
-                className="pl-9"
-              />
-            </div>
+
+          <div className="flex flex-wrap items-center gap-2">
             <Select value={selectedCenterCost} onValueChange={setSelectedCenterCost}>
-              <SelectTrigger className="h-11 w-[230px] bg-transparent text-[0.95rem]">
+              <SelectTrigger className="h-10 w-[230px] bg-transparent">
                 <SelectValue placeholder="Centro de custo" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="todos">Todos centros</SelectItem>
+                <SelectItem value="todos">Todos os centros</SelectItem>
                 {centerCostOptions.map((centerCost) => (
                   <SelectItem key={centerCost} value={centerCost}>
                     {centerCost}
@@ -564,8 +528,9 @@ export function AgregadosOverview({
                 ))}
               </SelectContent>
             </Select>
+
             <Select value={selectedContract} onValueChange={(value) => setSelectedContract(value as ContractFilter)}>
-              <SelectTrigger className="h-11 w-[190px] bg-transparent text-[0.95rem]">
+              <SelectTrigger className="h-10 w-[170px] bg-transparent">
                 <SelectValue placeholder="Contrato" />
               </SelectTrigger>
               <SelectContent>
@@ -575,8 +540,9 @@ export function AgregadosOverview({
                 <SelectItem value="renovar">Renovar</SelectItem>
               </SelectContent>
             </Select>
+
             <Select value={sortBy} onValueChange={(value) => setSortBy(value as SortOption)}>
-              <SelectTrigger className="h-11 w-[225px] bg-transparent text-[0.95rem]">
+              <SelectTrigger className="h-10 w-[215px] bg-transparent">
                 <SelectValue placeholder="Ordenar por" />
               </SelectTrigger>
               <SelectContent>
@@ -586,99 +552,136 @@ export function AgregadosOverview({
                 <SelectItem value="colaborador_asc">Colaborador A-Z</SelectItem>
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" className="h-11 gap-2 bg-transparent text-[0.95rem]" onClick={exportRows}>
-              <Download className="h-4 w-4" />
-              Exportar dados
-            </Button>
-            {canManage && onAdd ? (
-              <Button onClick={onAdd} className="h-11 gap-2 text-[0.95rem]">
-                <Plus className="h-4 w-4" />
-                Adicionar agregado
+
+            {hasActiveFilters ? (
+              <Button type="button" variant="ghost" className="h-10 gap-1.5" onClick={clearFilters}>
+                <X className="h-4 w-4" />
+                Limpar
               </Button>
             ) : null}
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {filteredRows.length === 0 ? (
-            <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-              <div className="rounded-full bg-muted p-3 text-muted-foreground">
-                <ClipboardList className="h-6 w-6" />
-              </div>
-              <div>
-                <p className="text-lg font-medium text-foreground">Nenhum agregado encontrado</p>
-                <p className="text-sm text-muted-foreground">Ajuste a busca atual ou adicione novos veículos agregados para preencher esta visão.</p>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-b-2xl bg-[#fcfdfb]">
-              <div className="flex flex-wrap items-center gap-2 border-b border-[#dfe9d7] bg-[#fbfcf8] px-4 py-3 text-[0.82rem] font-medium uppercase tracking-[0.12em] text-slate-500">
-                <span>{filteredRows.length} registros</span>
-                <span className="h-1 w-1 rounded-full bg-slate-300" />
-                <span>{selectedCenterCost === "todos" ? "Todos centros" : selectedCenterCost}</span>
-                <span className="h-1 w-1 rounded-full bg-slate-300" />
-                <span>{selectedContract === "todos" ? "Todos contratos" : selectedContract}</span>
-              </div>
-              <div className="border-b border-[#dfe9d7] bg-[#f4f8ef] px-3 py-2">
-                <div
-                  ref={topScrollbarRef}
-                  className="overflow-x-scroll rounded-full border border-[#d7e5cf] bg-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]"
-                  aria-label="Rolagem horizontal da tabela"
+
+            {canManage ? (
+              <>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".xlsb,.xlsx,.xlsm,.xls,.csv"
+                  className="hidden"
+                  onChange={(event) => handleImport(event.target.files)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 gap-2 bg-transparent"
+                  disabled={importing}
+                  onClick={() => importInputRef.current?.click()}
                 >
-                  <div className="h-3" style={{ width: tableScrollWidth }} />
-                </div>
-              </div>
-              <div ref={tableRegionRef}>
-              <Table className="min-w-[1380px] border-separate border-spacing-0 font-sans">
-                <TableHeader className="sticky top-0 z-10">
-                  <TableRow className="border-b-0 hover:bg-transparent">
-                    <TableHead className={spreadsheetHeadClass}>Colaborador</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Função</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Placa</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Contrato</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Centro de Custo</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Veículo</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Ano/Modelo</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Valor Locação</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Data Inicial</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Data Final</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Dias</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Valor Dia</TableHead>
-                    <TableHead className={spreadsheetHeadClass}>Valor</TableHead>
-                    {canManage ? <TableHead className={`${spreadsheetHeadClass} w-[64px]`} /> : null}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredRows.map((row, index) => (
-                    <TableRow
-                      key={row.vehicle.id}
-                      className={index % 2 === 0 ? "bg-white/95" : "bg-[#f9fbf7]"}
-                    >
-                      <TableCell className={`${spreadsheetCellClass} font-semibold text-slate-900`}>{row.colaboradorNome}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} font-medium`}>{row.funcao}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} font-mono text-[13.5px] font-semibold tracking-[0.08em] text-slate-800`}>{row.vehicle.placa}</TableCell>
-                      <TableCell className={spreadsheetCellClass}>
-                        <Badge
-                          variant="outline"
-                          className={
-                            row.contrato === "ASSINADO"
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : "border-amber-200 bg-amber-50 text-amber-700"
-                          }
-                        >
+                  {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {importing ? "Importando..." : "Importar planilha"}
+                </Button>
+              </>
+            ) : null}
+
+            <Button type="button" className="h-10 gap-2" disabled={exporting} onClick={handleExport}>
+              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {exporting ? "Gerando..." : "Exportar planilha"}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {filteredRows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card py-16">
+          <div className="rounded-full bg-muted p-3 text-muted-foreground">
+            <ClipboardList className="h-6 w-6" />
+          </div>
+          <p className="mt-3 text-lg font-medium text-foreground">Nenhum veículo agregado encontrado</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {hasActiveFilters ? "Ajuste os filtros para ver outros registros." : "Adicione um novo agregado para começar."}
+          </p>
+        </div>
+      ) : (
+        <div ref={wrapperRef} className="space-y-2">
+          <div className="table-scroll-hidden overflow-hidden rounded-lg border border-border bg-card">
+            <Table className="min-w-[1460px]">
+              <TableHeader>
+                <TableRow className="bg-muted/50">
+                  <TableHead className="w-[56px] text-center text-[0.88rem] font-semibold">#</TableHead>
+                  <TableHead className="text-left text-[0.88rem] font-semibold">Colaborador</TableHead>
+                  <TableHead className="text-left text-[0.88rem] font-semibold">Contrato</TableHead>
+                  <TableHead className="text-left text-[0.88rem] font-semibold">Centro de Custo</TableHead>
+                  <TableHead className="text-left text-[0.88rem] font-semibold">Veículo</TableHead>
+                  <TableHead className="text-center text-[0.88rem] font-semibold">Ano/Modelo</TableHead>
+                  <TableHead className="text-center text-[0.88rem] font-semibold">Valor Locação</TableHead>
+                  <TableHead className="text-center text-[0.88rem] font-semibold">Período</TableHead>
+                  <TableHead className="text-center text-[0.88rem] font-semibold">Dias</TableHead>
+                  <TableHead className="text-center text-[0.88rem] font-semibold">Valor Dia</TableHead>
+                  <TableHead className="text-center text-[0.88rem] font-semibold">Valor</TableHead>
+                  <TableHead className="text-left text-[0.88rem] font-semibold">Observação</TableHead>
+                  {canManage ? (
+                    <TableHead className="sticky right-0 z-10 w-[70px] bg-muted/50 text-center shadow-[-1px_0_0_hsl(var(--border))]" />
+                  ) : null}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredRows.map((row, index) => {
+                  const vehicleVisual = getVehicleVisual(row.vehicle.modelo)
+                  const VehicleIcon = vehicleVisual.icon
+                  const rowClass = index % 2 === 0 ? "bg-white hover:bg-[#e7f4dc]" : "bg-[#fbfdf9] hover:bg-[#deefd0]"
+                  const stickyActionClass =
+                    index % 2 === 0 ? "bg-white group-hover:bg-[#e7f4dc]" : "bg-[#fbfdf9] group-hover:bg-[#deefd0]"
+
+                  return (
+                    <TableRow key={row.vehicle.id} className={`group ${rowClass}`}>
+                      <TableCell className="align-middle text-center text-[0.85rem] font-semibold text-muted-foreground">
+                        {index + 1}
+                      </TableCell>
+                      <TableCell className="align-middle text-left">
+                        <div className="space-y-1">
+                          <div className="font-medium text-foreground">{row.colaboradorNome}</div>
+                          <div className="text-[0.78rem] uppercase tracking-wide text-muted-foreground">{row.funcao}</div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="align-middle text-left">
+                        <Badge variant="outline" className={cn("text-[0.76rem]", getContractBadgeClass(row.contrato))}>
                           {row.contrato}
                         </Badge>
                       </TableCell>
-                      <TableCell className={`${spreadsheetCellClass} text-slate-800`}>{row.centroCusto}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} font-medium text-slate-800`}>{row.vehicle.modelo}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} font-semibold text-slate-800`}>{row.anoModelo}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} font-semibold tabular-nums text-slate-900`}>{formatCurrency(row.vehicle.mensalidade)}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} tabular-nums`}>{formatDate(row.dataInicial)}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} tabular-nums`}>{formatDate(row.dataFinal)}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} text-center font-bold tabular-nums text-[#486235]`}>{row.dias}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} font-semibold tabular-nums`}>{formatCurrency(row.valorDia)}</TableCell>
-                      <TableCell className={`${spreadsheetCellClass} font-bold tabular-nums text-slate-950`}>{formatCurrency(row.valorTotal)}</TableCell>
+                      <TableCell className="align-middle text-left text-[0.88rem] text-foreground">{row.centroCusto}</TableCell>
+                      <TableCell className="align-middle text-left">
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            title={vehicleVisual.label}
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${vehicleVisual.chipClass}`}
+                          >
+                            <VehicleIcon className="h-4 w-4" />
+                          </span>
+                          <div className="space-y-1">
+                            <div className="text-[0.92rem] text-foreground">{row.vehicle.modelo}</div>
+                            <div className="font-mono text-[0.82rem] font-semibold text-muted-foreground">{row.vehicle.placa}</div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="align-middle text-center text-[0.9rem] text-muted-foreground">{row.anoModelo}</TableCell>
+                      <TableCell className="align-middle text-center text-[0.92rem] font-medium">
+                        {formatCurrency(row.vehicle.mensalidade)}
+                      </TableCell>
+                      <TableCell className="align-middle text-center text-[0.85rem] text-muted-foreground">
+                        <div>{formatDate(row.dataInicial)}</div>
+                        <div>{formatDate(row.dataFinal)}</div>
+                      </TableCell>
+                      <TableCell className="align-middle text-center text-[0.92rem] font-semibold tabular-nums">{row.dias}</TableCell>
+                      <TableCell className="align-middle text-center text-[0.92rem] tabular-nums">{formatCurrency(row.valorDia)}</TableCell>
+                      <TableCell className="align-middle text-center text-[0.95rem] font-semibold tabular-nums text-foreground">
+                        {formatCurrency(row.valorTotal)}
+                      </TableCell>
+                      <TableCell className="max-w-[240px] align-middle text-left text-[0.85rem] text-muted-foreground">
+                        {row.observacao || "-"}
+                      </TableCell>
                       {canManage ? (
-                        <TableCell className={`${spreadsheetCellClass} text-center`}>
+                        <TableCell
+                          className={`sticky right-0 z-10 text-center shadow-[-1px_0_0_hsl(var(--border))] ${stickyActionClass}`}
+                        >
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -689,7 +692,10 @@ export function AgregadosOverview({
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => onEdit(row.vehicle)}>Editar</DropdownMenuItem>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onDelete(row.vehicle.id)}>
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() => onDelete(row.vehicle.id)}
+                              >
                                 Excluir
                               </DropdownMenuItem>
                             </DropdownMenuContent>
@@ -697,67 +703,42 @@ export function AgregadosOverview({
                         </TableCell>
                       ) : null}
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="border-[#d8dfd1] bg-[#faf9f4] shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-[0.98rem] font-semibold uppercase tracking-[0.12em] text-slate-600">Cronograma de contratos</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-0">
-          <ChartContainer className="h-[260px] w-full" config={chartConfig}>
-            <BarChart accessibilityLayer data={summary.timelineData} layout="vertical" margin={{ left: 16, right: 8, top: 8, bottom: 8 }}>
-              <CartesianGrid horizontal={false} />
-              <XAxis type="number" hide />
-              <YAxis dataKey="competencia" type="category" tickLine={false} axisLine={false} width={76} />
-              <ChartTooltip
-                cursor={false}
-                content={
-                  <ChartTooltipContent
-                    formatter={(value, _name, item) => `${formatCurrency(Number(value))} · ${item.payload.contratos} contratos`}
-                  />
-                }
-              />
-              <Bar dataKey="total" fill="var(--color-competencia)" radius={8} />
-            </BarChart>
-          </ChartContainer>
-
-          <div className="space-y-2">
-            {summary.timelineData.map((item) => (
-              <div key={item.competencia} className="flex items-center justify-between gap-3 rounded-lg border border-[#e2e6dc] bg-white/80 px-3 py-2 text-[0.95rem]">
-                <div className="flex items-center gap-2 text-slate-700">
-                  <CalendarClock className="h-4 w-4 text-[#b98525]" />
-                  <span>{item.competencia}</span>
-                </div>
-                <div className="text-right">
-                  <p className="font-semibold text-slate-900">{formatCurrency(item.total)}</p>
-                  <p className="text-[0.82rem] text-slate-500">{item.contratos} contratos</p>
-                </div>
-              </div>
-            ))}
+                  )
+                })}
+              </TableBody>
+            </Table>
           </div>
-        </CardContent>
-      </Card>
-      </div>
 
-      <div className="grid gap-3 rounded-xl border border-border bg-card px-4 py-3 text-[0.95rem] text-muted-foreground md:grid-cols-3">
-        <div className="flex items-center gap-2">
-          <CalendarDays className="h-4 w-4 text-[#5f9736]" />
-          <span>Competência: {formatCompetencia(referenceMonth).toUpperCase()}</span>
+          {showStickyScrollbar ? (
+            <div
+              ref={stickyScrollbarRef}
+              className="sticky bottom-0 z-20 overflow-x-auto rounded-lg border border-border bg-card/95"
+              aria-hidden="true"
+            >
+              <div className="h-2.5" style={{ width: stickyScrollWidth }} />
+            </div>
+          ) : null}
         </div>
+      )}
+
+      <div className="grid gap-3 rounded-lg border border-border bg-card px-4 py-3 text-[0.9rem] text-muted-foreground md:grid-cols-4">
         <div className="flex items-center gap-2">
           <Wallet className="h-4 w-4 text-[#5f9736]" />
-          <span>Pagamento previsto: {paymentDateLabel}</span>
+          <span>
+            Total a pagar: <strong className="text-foreground">{formatCurrency(summary.totalToPay)}</strong>
+          </span>
         </div>
-        <div className="flex items-center gap-2 truncate">
-          <Building2 className="h-4 w-4 text-[#5f9736]" />
-          <span>Aprovado por: {approverName || "Gestor"}</span>
+        <div className="flex items-center gap-2">
+          <CalendarDays className="h-4 w-4 text-[#5f9736]" />
+          <span className="capitalize">Competência: {formatCompetencia(referenceMonth)}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <FileSignature className="h-4 w-4 text-[#5f9736]" />
+          <span>Pagamento: todo dia 27 ({paymentDateLabel})</span>
+        </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <ClipboardList className="h-4 w-4 shrink-0 text-[#5f9736]" />
+          <span className="truncate">Responsável: {approverName || "Gestor"}</span>
         </div>
       </div>
     </div>

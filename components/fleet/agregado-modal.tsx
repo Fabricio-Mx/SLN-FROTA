@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { CalendarDays, CircleDollarSign, FileText, UserSquare2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -15,8 +15,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/hooks/use-toast"
-import type { Vehicle, VehicleFormData } from "@/lib/types"
+import type { Colaborador, Vehicle, VehicleFormData } from "@/lib/types"
 
 function calculateDays(startDate: string, endDate: string): number | null {
   if (!startDate || !endDate) return null
@@ -46,8 +47,11 @@ interface AgregadoModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   vehicle?: Vehicle | null
+  colaboradores: Colaborador[]
   onSave: (data: VehicleFormData) => void
 }
+
+const NO_COLABORADOR_VALUE = "__sem_colaborador__"
 
 const initialFormData: VehicleFormData = {
   placa: "",
@@ -74,6 +78,7 @@ const initialFormData: VehicleFormData = {
   agregadoAnoModelo: null,
   agregadoDataInicial: null,
   agregadoDias: null,
+  agregadoObservacao: null,
   colaboradorId: null,
 }
 
@@ -96,6 +101,7 @@ export function AgregadoModal({
   open,
   onOpenChange,
   vehicle,
+  colaboradores,
   onSave,
 }: AgregadoModalProps) {
   const [formData, setFormData] = useState<VehicleFormData>(initialFormData)
@@ -129,6 +135,7 @@ export function AgregadoModal({
         agregadoAnoModelo: vehicle.agregadoAnoModelo ?? vehicle.chassi ?? null,
         agregadoDataInicial: vehicle.agregadoDataInicial ?? vehicle.dataVencimentoCNHAgregado ?? null,
         agregadoDias: vehicle.agregadoDias ?? vehicle.km ?? null,
+        agregadoObservacao: vehicle.agregadoObservacao ?? null,
         colaboradorId: vehicle.colaboradorId || null,
         checklists: vehicle.checklists || [],
       })
@@ -197,6 +204,29 @@ export function AgregadoModal({
 
   const updateField = <K extends keyof VehicleFormData,>(field: K, value: VehicleFormData[K]) => {
     setFormData((current) => ({ ...current, [field]: value }))
+  }
+
+  const sortedColaboradores = useMemo(
+    () => [...colaboradores].sort((left, right) => left.nome.localeCompare(right.nome, "pt-BR")),
+    [colaboradores]
+  )
+
+  const handleSelectColaborador = (value: string) => {
+    if (value === NO_COLABORADOR_VALUE) {
+      updateField("colaboradorId", null)
+      return
+    }
+
+    const colaborador = colaboradores.find((item) => item.id === value)
+    if (!colaborador) return
+
+    setFormData((current) => ({
+      ...current,
+      colaboradorId: colaborador.id,
+      agregadoColaboradorNome: colaborador.nome,
+      agregadoFuncao: colaborador.departamento?.trim() ? colaborador.departamento : current.agregadoFuncao,
+      agregadoCentroCusto: colaborador.centroCusto?.trim() ? colaborador.centroCusto : current.agregadoCentroCusto,
+    }))
   }
 
   const updateDateRange = (nextStartDate: string, nextEndDate: string) => {
@@ -285,7 +315,8 @@ export function AgregadoModal({
       agregadoAnoModelo: formData.agregadoAnoModelo?.trim() || null,
       agregadoDataInicial: formData.agregadoDataInicial || null,
       agregadoDias: Number(formData.agregadoDias) || 0,
-      colaboradorId: null,
+      agregadoObservacao: formData.agregadoObservacao?.trim() || null,
+      colaboradorId: formData.colaboradorId || null,
     })
 
     onOpenChange(false)
@@ -329,13 +360,31 @@ export function AgregadoModal({
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="grid gap-2">
-                <Label htmlFor="agregadoColaboradorNome">Colaborador</Label>
-                <Input
-                  id="agregadoColaboradorNome"
-                  placeholder="Ex: Jefferson Cabral"
-                  value={formData.agregadoColaboradorNome ?? ""}
-                  onChange={(event) => updateField("agregadoColaboradorNome", event.target.value)}
-                />
+                <Label htmlFor="agregadoColaboradorId">Colaborador</Label>
+                <Select
+                  value={formData.colaboradorId ?? NO_COLABORADOR_VALUE}
+                  onValueChange={handleSelectColaborador}
+                >
+                  <SelectTrigger id="agregadoColaboradorId">
+                    <SelectValue placeholder="Selecione o colaborador" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_COLABORADOR_VALUE}>Não vinculado (informar manualmente)</SelectItem>
+                    {sortedColaboradores.map((colaborador) => (
+                      <SelectItem key={colaborador.id} value={colaborador.id}>
+                        {colaborador.nome}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {formData.colaboradorId ? null : (
+                  <Input
+                    id="agregadoColaboradorNome"
+                    placeholder="Nome do colaborador (ex: Jefferson Cabral)"
+                    value={formData.agregadoColaboradorNome ?? ""}
+                    onChange={(event) => updateField("agregadoColaboradorNome", event.target.value)}
+                  />
+                )}
                 {errors.agregadoColaboradorNome ? <p className="text-sm text-destructive">{errors.agregadoColaboradorNome}</p> : null}
               </div>
 
@@ -462,6 +511,17 @@ export function AgregadoModal({
                 />
                 {errors.agregadoDias ? <p className="text-sm text-destructive">{errors.agregadoDias}</p> : null}
               </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="agregadoObservacao">Observação</Label>
+              <Textarea
+                id="agregadoObservacao"
+                rows={2}
+                placeholder="Ex: Contrato assinado 16/04/2026 ou Colaborador desligado 27/07/2026"
+                value={formData.agregadoObservacao ?? ""}
+                onChange={(event) => updateField("agregadoObservacao", event.target.value)}
+              />
             </div>
 
             <Separator />

@@ -2,11 +2,12 @@
 
 import { useMemo } from "react"
 import useSWR from "swr"
-import { Car, Key, CreditCard, AlertTriangle, Wrench, Settings, Fuel, Send, BadgeCheck } from "lucide-react"
+import { Car, Key, CreditCard, AlertTriangle, Wrench, Settings, Fuel, Send, BadgeCheck, Truck, Wallet } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { fuelFetcher, FUEL_DATA_SWR_KEY, type FuelResponse } from "@/hooks/use-fuel-data"
 import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
+import { isAgregadoVehicle } from "@/lib/vehicle-classification"
 import { getFuelFinancialPostingCycleBounds } from "@/lib/fuel-billing"
 import { getMultaTotalValue } from "@/lib/multas"
 import { cn } from "@/lib/utils"
@@ -45,6 +46,8 @@ interface StatsCardsProps {
   vehicles: Vehicle[]
   multas: Multa[]
 }
+
+const AGREGADO_CYCLE_DAYS = 30
 
 function countExpiringContracts(vehicles: Vehicle[]): number {
   const today = new Date()
@@ -93,6 +96,11 @@ const statCardVariants: Record<string, { cardClass: string; iconClass: string; g
     cardClass: "border-[#c9e6f6] bg-[linear-gradient(180deg,#edf9ff_0%,#e1f3fb_100%)] shadow-[0_10px_24px_rgba(15,142,207,0.10)]",
     iconClass: "border-[#a7d8f0] bg-[#def4ff] text-[#095f89]",
     glowClass: "bg-[#98d7f0]/24",
+  },
+  "Valor a Pagar Agregados": {
+    cardClass: "border-[#c8e9e4] bg-[linear-gradient(180deg,#eefaf7_0%,#e2f4ef_100%)] shadow-[0_10px_24px_rgba(21,154,140,0.10)]",
+    iconClass: "border-[#added6] bg-[#dff5f0] text-[#0a6e64]",
+    glowClass: "bg-[#98d9cf]/22",
   },
   "Contratos a Vencer Agregados": {
     cardClass: "border-[#ebd1d5] bg-[linear-gradient(180deg,#f9ebed_0%,#f3dfe3_100%)] shadow-[0_10px_24px_rgba(183,96,109,0.10)]",
@@ -169,6 +177,18 @@ export function StatsCards({ vehicles, multas }: StatsCardsProps) {
       .reduce((sum, multa) => sum + getMultaTotalValue(multa), 0)
     const quantidadePagaRh = multas.filter((multa) => multa.rhStatus === "pago").length
 
+    const agregados = vehicles.filter((vehicle) => isAgregadoVehicle(vehicle))
+    const valorAgregados = agregados.reduce((sum, vehicle) => {
+      const dias =
+        vehicle.agregadoDias && vehicle.agregadoDias > 0 ? vehicle.agregadoDias : vehicle.km > 0 ? vehicle.km : AGREGADO_CYCLE_DAYS
+      const valorDia = vehicle.mensalidade > 0 ? vehicle.mensalidade / AGREGADO_CYCLE_DAYS : 0
+      return sum + valorDia * dias
+    }, 0)
+    const contratosAssinadosAgregados = agregados.filter((vehicle) => {
+      const contrato = vehicle.agregadoContrato?.toUpperCase() ?? (vehicle.checklists?.length ? "ASSINADO" : "")
+      return contrato.includes("ASSINADO")
+    }).length
+
     return {
       primary: [
         {
@@ -231,6 +251,20 @@ export function StatsCards({ vehicles, multas }: StatsCardsProps) {
           icon: BadgeCheck,
           color: "bg-emerald-500/10 text-emerald-600",
         },
+        {
+          label: "Veículos Agregados",
+          value: agregados.length.toString(),
+          helperText: `${contratosAssinadosAgregados} ${contratosAssinadosAgregados === 1 ? "contrato assinado" : "contratos assinados"}`,
+          icon: Truck,
+          color: "bg-sky-500/10 text-sky-600",
+        },
+        {
+          label: "Valor a Pagar Agregados",
+          value: formatCurrency(valorAgregados),
+          helperText: "Locação do mês · pagamento todo dia 27",
+          icon: Wallet,
+          color: "bg-teal-500/10 text-teal-600",
+        },
       ],
     }
   }, [billingCycle.end, billingCycle.start, billingCycleFuelTotal, lastImportedLabel, multas, vehicles])
@@ -268,7 +302,7 @@ export function StatsCards({ vehicles, multas }: StatsCardsProps) {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {stats.primary.map(renderStatCard)}
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {stats.secondary.map(renderStatCard)}
       </div>
     </div>

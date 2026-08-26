@@ -162,7 +162,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
   const shouldLoadColaboradores = resolvedInitialSection !== "combustivel"
   const shouldLoadMultas = resolvedInitialSection === "overview"
   const monthlyFuelTotal = fuelData?.monthlyTotal ?? 0
-  const { vehicles, addVehicle, updateVehicle, deleteVehicle } = useVehicles(shouldLoadVehicles)
+  const { vehicles, addVehicle, updateVehicle, deleteVehicle, refreshVehicles } = useVehicles(shouldLoadVehicles)
   const {
     colaboradores,
     addColaborador,
@@ -862,9 +862,9 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
             colaboradores={colaboradores}
             approverName={initialUser.nome}
             canManage={canAddVehicles(userRole)}
-            onAdd={handleAddAgregado}
             onEdit={handleEditAgregado}
             onDelete={handleDeleteVehicleClick}
+            onImported={refreshVehicles}
           />
         </div>
       )
@@ -966,6 +966,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
         open={isAgregadoModalOpen}
         onOpenChange={setIsAgregadoModalOpen}
         vehicle={editingAgregado}
+        colaboradores={colaboradores}
         onSave={handleSaveAgregado}
       />
 

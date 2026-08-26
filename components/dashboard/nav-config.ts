@@ -33,7 +33,7 @@ export type DashboardSectionItem = {
   icon: LucideIcon
 }
 
-export const SHOW_AGREGADOS_SECTION = false
+export const SHOW_AGREGADOS_SECTION = true
 
 export const DASHBOARD_SECTIONS: DashboardSectionItem[] = [
   {
