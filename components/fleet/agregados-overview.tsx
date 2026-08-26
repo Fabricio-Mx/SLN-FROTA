@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Download,
   FileSignature,
+  FileText,
   Loader2,
   MoreHorizontal,
   Search,
@@ -627,6 +628,7 @@ export function AgregadosOverview({
                 {filteredRows.map((row, index) => {
                   const vehicleVisual = getVehicleVisual(row.vehicle.modelo)
                   const VehicleIcon = vehicleVisual.icon
+                  const contratoFile = row.vehicle.checklists?.[0]
                   const rowClass = index % 2 === 0 ? "bg-white hover:bg-[#e7f4dc]" : "bg-[#fbfdf9] hover:bg-[#deefd0]"
                   const stickyActionClass =
                     index % 2 === 0 ? "bg-white group-hover:bg-[#e7f4dc]" : "bg-[#fbfdf9] group-hover:bg-[#deefd0]"
@@ -643,9 +645,31 @@ export function AgregadosOverview({
                         </div>
                       </TableCell>
                       <TableCell className="align-middle text-left">
-                        <Badge variant="outline" className={cn("text-[0.76rem]", getContractBadgeClass(row.contrato))}>
-                          {row.contrato}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className={cn("text-[0.76rem]", getContractBadgeClass(row.contrato))}>
+                            {row.contrato}
+                          </Badge>
+                          {contratoFile ? (
+                            <>
+                              <a
+                                href={`/api/drive/file/${contratoFile.id}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Visualizar contrato"
+                                className="text-muted-foreground hover:text-foreground"
+                              >
+                                <FileText className="h-4 w-4" />
+                              </a>
+                              <a
+                                href={`/api/drive/file/${contratoFile.id}?download=1`}
+                                title="Baixar contrato"
+                                className="text-muted-foreground hover:text-foreground"
+                              >
+                                <Download className="h-4 w-4" />
+                              </a>
+                            </>
+                          ) : null}
+                        </div>
                       </TableCell>
                       <TableCell className="align-middle text-left text-[0.88rem] text-foreground">{row.centroCusto}</TableCell>
                       <TableCell className="align-middle text-left">
