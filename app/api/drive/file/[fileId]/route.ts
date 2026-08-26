@@ -7,26 +7,30 @@ export const runtime = "nodejs"
 
 type DriveFileRef = { id?: string; name?: string; mimeType?: string | null }
 
-// Só libera arquivos que estejam realmente vinculados a um colaborador.
+// Só libera arquivos que estejam realmente vinculados a um colaborador ou veículo.
 async function findLinkedFile(fileId: string): Promise<DriveFileRef | null> {
   const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from("fleet_colaboradores")
-    .select("documentos, cnh_arquivos, imagens_veiculo")
-    .limit(10000)
 
-  if (error) {
-    throw new Error(error.message)
-  }
+  const sources: { table: string; columns: string[] }[] = [
+    { table: "fleet_colaboradores", columns: ["documentos", "cnh_arquivos", "imagens_veiculo"] },
+    { table: "fleet_vehicles", columns: ["checklists", "imagens"] },
+  ]
 
-  for (const row of data ?? []) {
-    const groups = [row.documentos, row.cnh_arquivos, row.imagens_veiculo]
+  for (const source of sources) {
+    const { data, error } = await supabase.from(source.table).select(source.columns.join(", ")).limit(10000)
 
-    for (const group of groups) {
-      if (!Array.isArray(group)) continue
+    if (error) {
+      throw new Error(error.message)
+    }
 
-      const match = (group as DriveFileRef[]).find((item) => item?.id === fileId)
-      if (match) return match
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      for (const column of source.columns) {
+        const group = row[column]
+        if (!Array.isArray(group)) continue
+
+        const match = (group as DriveFileRef[]).find((item) => item?.id === fileId)
+        if (match) return match
+      }
     }
   }
 
