@@ -930,7 +930,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
           notifications={notifications}
         />
 
-        <main className="mx-auto w-full max-w-[1440px] px-4 py-3 sm:px-5 sm:py-4 lg:px-6 lg:py-5 xl:px-8 xl:py-6">
+        <main className="w-full px-4 py-3 sm:px-5 sm:py-4 lg:px-6 lg:py-5 xl:px-8 xl:py-6">
           <div className="min-h-[calc(100vh-9rem)] w-full space-y-4 sm:min-h-[calc(100vh-10rem)] sm:space-y-5 lg:space-y-6">
             <div className={DASHBOARD_HEADER_CARD_CLASS}>
               <div className="flex flex-wrap items-start justify-between gap-4">

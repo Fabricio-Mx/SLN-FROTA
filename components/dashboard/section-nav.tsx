@@ -32,9 +32,18 @@ type SectionNavProps = {
   tone?: "light" | "dark"
   onNavigate?: () => void
   className?: string
+  collapsed?: boolean
 }
 
-export function SectionNav({ groups, activeId, palette, tone = "light", onNavigate, className }: SectionNavProps) {
+export function SectionNav({
+  groups,
+  activeId,
+  palette,
+  tone = "light",
+  onNavigate,
+  className,
+  collapsed = false,
+}: SectionNavProps) {
   const isDark = tone === "dark"
 
   return (
@@ -42,14 +51,18 @@ export function SectionNav({ groups, activeId, palette, tone = "light", onNaviga
       {groups.map((group, groupIndex) => (
         <div key={group.title ?? `group-${groupIndex}`} className="flex flex-col gap-1.5">
           {group.title ? (
-            <p
-              className={cn(
-                "px-2.5 pb-1 text-[0.68rem] font-semibold uppercase tracking-wider",
-                isDark ? "text-white/45" : "text-muted-foreground"
-              )}
-            >
-              {group.title}
-            </p>
+            collapsed ? (
+              <div aria-hidden="true" className={cn("mx-2 mb-1 h-px", isDark ? "bg-white/15" : "bg-border")} />
+            ) : (
+              <p
+                className={cn(
+                  "px-2.5 pb-1 text-[0.68rem] font-semibold uppercase tracking-wider",
+                  isDark ? "text-white/45" : "text-muted-foreground"
+                )}
+              >
+                {group.title}
+              </p>
+            )
           ) : null}
 
           {group.items.map((item) => {
@@ -61,24 +74,30 @@ export function SectionNav({ groups, activeId, palette, tone = "light", onNaviga
                 <div
                   key={item.id}
                   aria-disabled="true"
+                  title={collapsed ? `${item.label} (em breve)` : undefined}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl border border-transparent px-3.5 py-2.5 text-sm font-medium",
+                    "flex items-center gap-3 rounded-xl border border-transparent py-2.5 text-sm font-medium",
+                    collapsed ? "justify-center px-0" : "px-3.5",
                     isDark ? "text-white/40" : "text-muted-foreground/60"
                   )}
                 >
                   <item.icon className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "shrink-0 px-1.5 py-0 text-[0.6rem] font-medium",
-                      isDark
-                        ? "border-white/15 bg-white/10 text-white/60"
-                        : "border-border bg-muted/60 text-muted-foreground"
-                    )}
-                  >
-                    Em breve
-                  </Badge>
+                  {collapsed ? null : (
+                    <>
+                      <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "shrink-0 px-1.5 py-0 text-[0.6rem] font-medium",
+                          isDark
+                            ? "border-white/15 bg-white/10 text-white/60"
+                            : "border-border bg-muted/60 text-muted-foreground"
+                        )}
+                      >
+                        Em breve
+                      </Badge>
+                    </>
+                  )}
                 </div>
               )
             }
@@ -89,14 +108,17 @@ export function SectionNav({ groups, activeId, palette, tone = "light", onNaviga
                 href={item.href}
                 onClick={onNavigate}
                 aria-current={isActive ? "page" : undefined}
+                aria-label={collapsed ? item.label : undefined}
+                title={collapsed ? item.label : undefined}
                 className={cn(
-                  "flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-sm font-medium transition-colors",
+                  "flex items-center gap-3 rounded-xl border py-2.5 text-sm font-medium transition-colors",
+                  collapsed ? "justify-center px-0" : "px-3.5",
                   isDark ? "shadow-none" : "shadow-sm",
                   isActive ? colors.active : colors.inactive
                 )}
               >
                 <item.icon className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+                {collapsed ? null : <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>}
               </Link>
             )
           })}
