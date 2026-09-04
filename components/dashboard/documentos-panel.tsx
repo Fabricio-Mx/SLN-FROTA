@@ -350,12 +350,19 @@ export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
   return (
     <div className="w-full space-y-4">
       <Tabs defaultValue="crlv" className="w-full space-y-4">
-        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-muted/60 p-1">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 rounded-xl border border-border bg-card p-2">
           {tabs.map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value} className="gap-2">
+            <TabsTrigger
+              key={tab.value}
+              value={tab.value}
+              className="h-11 flex-1 gap-2 rounded-lg border border-border bg-background px-4 text-[0.95rem] font-semibold text-muted-foreground shadow-sm transition-colors hover:bg-muted data-[state=active]:border-[#d97706] data-[state=active]:bg-[#d97706] data-[state=active]:text-white data-[state=active]:shadow-md"
+            >
               <tab.icon className="h-4 w-4" />
               {tab.label}
-              <Badge variant="outline" className="ml-1 border-border bg-background px-1.5 py-0 text-[0.65rem]">
+              <Badge
+                variant="outline"
+                className="ml-1 border-border bg-muted px-1.5 py-0 text-[0.68rem] font-semibold text-muted-foreground"
+              >
                 {tab.pendentes > 0 ? `${tab.pendentes} pendente(s)` : "completo"}
               </Badge>
             </TabsTrigger>
