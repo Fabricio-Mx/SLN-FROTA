@@ -80,17 +80,20 @@ export function FuelImportPanel({ isMaster = false }: FuelImportPanelProps) {
         throw new Error(formatDriveErrorMessage(data, "Falha ao enviar planilha."))
       }
 
+      const kmAtualizados = Number(data?.kmAtualizados ?? 0)
+      const kmResumo = kmAtualizados > 0 ? ` KM atualizado em ${kmAtualizados} veículo(s).` : ""
+
       toast({
         title: "Importação concluída",
         description:
-          data?.replacedMonths?.length > 0
+          (data?.replacedMonths?.length > 0
             ? `Fatura atualizada com ${data?.imported ?? 0} registros. Competências substituídas: ${data.replacedMonths.join(", ")}.`
             :
           data?.replacedMonth
             ? `Competência ${data.replacedMonth} substituída com ${data?.imported ?? 0} registros do relatório mensal.`
             : data?.archivedMonths?.length > 0
             ? `Registros importados: ${data?.imported ?? 0}. Meses arquivados: ${data.archivedMonths.join(", ")}.`
-            : `Registros importados: ${data?.imported ?? 0}`,
+            : `Registros importados: ${data?.imported ?? 0}`) + kmResumo,
       })
       if (data?.replacedMonths?.length > 0) {
         setSelectedMonth(data.replacedMonths[0])

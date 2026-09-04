@@ -28,6 +28,8 @@ import {
   readJsonFile,
   upsertJsonFile,
 } from "@/lib/google-drive"
+import { collectOdometerReadings, normalizePlate } from "@/lib/driver-links-shared"
+import { createAdminClient } from "@/lib/supabase/admin"
 import { formatFuelDateTimeStorage } from "@/lib/fuel-datetime"
 
 export const runtime = "nodejs"
@@ -177,6 +179,55 @@ async function loadFuelStorage(): Promise<{
   return { currentRecords, history, metadata }
 }
 
+type FleetVehicleOdometerRow = {
+  id: string
+  placa: string | null
+  placa_cartao_combustivel: string | null
+  km: number | null
+}
+
+// O cartao VELOE fica dentro do veiculo, entao o hodometro da coluna AO segue sempre a placa do cartao.
+async function syncVehicleOdometers(records: FuelRecord[]): Promise<{ updated: number; error: string | null }> {
+  const { byPlate } = collectOdometerReadings(records)
+  if (byPlate.size === 0) return { updated: 0, error: null }
+
+  let supabase: ReturnType<typeof createAdminClient>
+  try {
+    supabase = createAdminClient()
+  } catch (error) {
+    return { updated: 0, error: error instanceof Error ? error.message : "Supabase indisponivel." }
+  }
+
+  const { data, error } = await supabase
+    .from("fleet_vehicles")
+    .select("id, placa, placa_cartao_combustivel, km")
+
+  if (error || !data) {
+    return { updated: 0, error: error?.message ?? "Falha ao carregar veiculos." }
+  }
+
+  const rows = data as FleetVehicleOdometerRow[]
+  const fleetPlates = new Set(rows.map((row) => normalizePlate(row.placa ?? "")).filter(Boolean))
+  let updated = 0
+
+  for (const row of rows) {
+    const ownPlate = normalizePlate(row.placa ?? "")
+    const cardPlate = normalizePlate(row.placa_cartao_combustivel ?? "")
+
+    // Placa de cartao que pertence a outro carro da frota: o hodometro seria do veiculo errado.
+    if (cardPlate && cardPlate !== ownPlate && fleetPlates.has(cardPlate)) continue
+
+    const plateKey = cardPlate || ownPlate
+    const reading = plateKey ? byPlate.get(plateKey) : undefined
+    if (!reading || reading.km === Number(row.km ?? 0)) continue
+
+    const { error: updateError } = await supabase.from("fleet_vehicles").update({ km: reading.km }).eq("id", row.id)
+    if (!updateError) updated += 1
+  }
+
+  return { updated, error: null }
+}
+
 async function persistFuelStorage(currentRecords: FuelRecord[], history: FuelMonthArchive[], metadata: FuelImportMetadata) {
   let drivePersisted = false
   let driveError: string | null = null
@@ -296,6 +347,11 @@ export async function POST(req: Request) {
     const monthlyReplacementMonth = importMode === "monthly" ? (targetMonth ?? importedMonths[0] ?? null) : null
     const importedRecordsByMonth = new Map<string, FuelRecord[]>()
 
+    // So atualizamos o hodometro com a competencia corrente: reimportar um mes antigo nao pode rebaixar o KM.
+    const odometerRecords = currentMonthKey
+      ? importedRecords.filter((record) => getFuelMonthKey(record.dateTime) === currentMonthKey)
+      : []
+
     for (const record of importedRecords) {
       const monthKey = getFuelMonthKey(record.dateTime)
       if (!monthKey) continue
@@ -377,6 +433,7 @@ export async function POST(req: Request) {
         total: nextStored.length,
         replacedMonths: importedMonths,
         archivedMonths: importedMonths.filter((month) => !currentMonthKey || month < currentMonthKey),
+        kmAtualizados: (await syncVehicleOdometers(odometerRecords)).updated,
         storage,
       })
     }
@@ -418,6 +475,7 @@ export async function POST(req: Request) {
         total: nextStored.length,
         replacedMonth: monthlyReplacementMonth,
         archivedMonths: currentMonthKey && monthlyReplacementMonth < currentMonthKey ? [monthlyReplacementMonth] : [],
+        kmAtualizados: (await syncVehicleOdometers(odometerRecords)).updated,
         storage,
       })
     }
@@ -461,6 +519,7 @@ export async function POST(req: Request) {
             .filter((month): month is string => Boolean(month))
         )
       ).sort((left, right) => right.localeCompare(left)),
+      kmAtualizados: (await syncVehicleOdometers(odometerRecords)).updated,
       storage,
     })
   } catch (err) {

@@ -33,10 +33,11 @@ import type { Vehicle } from "@/lib/types"
 // Acima disso o salto de hodometro provavelmente e erro de digitacao do motorista.
 const SUSPICIOUS_JUMP_KM = 30_000
 
-type KmStatus = "atualizar" | "atualizado" | "verificar" | "sem-leitura" | "sem-cartao"
+type KmStatus = "atualizar" | "atualizado" | "verificar" | "sem-leitura" | "sem-cartao" | "conflito"
 
 type KmRow = {
   vehicle: Vehicle
+  plateUsed: string
   reading: OdometerReading | null
   diff: number
   status: KmStatus
@@ -50,6 +51,7 @@ const STATUS_LABELS: Record<KmStatus, string> = {
   verificar: "Verificar",
   "sem-leitura": "Sem leitura",
   "sem-cartao": "Sem cartão",
+  conflito: "Cartão de outro veículo",
 }
 
 const STATUS_CLASSES: Record<KmStatus, string> = {
@@ -58,6 +60,7 @@ const STATUS_CLASSES: Record<KmStatus, string> = {
   verificar: "border-amber-200 bg-amber-100 text-amber-700 hover:bg-amber-100",
   "sem-leitura": "border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-100",
   "sem-cartao": "border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-100",
+  conflito: "border-rose-200 bg-rose-100 text-rose-700 hover:bg-rose-100",
 }
 
 function formatKm(value: number | null | undefined): string {
@@ -86,29 +89,45 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
 
   const readings = useMemo(() => collectOdometerReadings(records), [records])
 
+  const fleetPlates = useMemo(
+    () => new Set(vehicles.map((vehicle) => normalizePlate(vehicle.placa)).filter(Boolean)),
+    [vehicles],
+  )
+
   const rows = useMemo<KmRow[]>(() => {
     return vehicles
       .map((vehicle) => {
         // O cartao fica dentro do veiculo, entao o hodometro sempre segue a placa do cartao.
-        const plateKey = normalizePlate(vehicle.placaCartaoCombustivel || "")
+        // Quando a placa do cartao nao esta cadastrada, a VELOE normalmente registra o cartao com a propria placa do carro.
+        const ownPlate = normalizePlate(vehicle.placa)
+        const cardPlate = normalizePlate(vehicle.placaCartaoCombustivel || "")
+        const plateKey = cardPlate || ownPlate
+
         if (!plateKey) {
-          return { vehicle, reading: null, diff: 0, status: "sem-cartao" as KmStatus }
+          return { vehicle, plateUsed: "", reading: null, diff: 0, status: "sem-cartao" as KmStatus }
+        }
+
+        const plateUsed = vehicle.placaCartaoCombustivel?.trim() || vehicle.placa
+
+        // Cartao cadastrado que é a placa de outro carro da frota: o KM seria do veiculo errado.
+        if (cardPlate && cardPlate !== ownPlate && fleetPlates.has(cardPlate)) {
+          return { vehicle, plateUsed, reading: null, diff: 0, status: "conflito" as KmStatus }
         }
 
         const reading = readings.byPlate.get(plateKey) ?? null
         if (!reading) {
-          return { vehicle, reading: null, diff: 0, status: "sem-leitura" as KmStatus }
+          return { vehicle, plateUsed, reading: null, diff: 0, status: "sem-leitura" as KmStatus }
         }
 
         const currentKm = vehicle.km ?? 0
         const diff = reading.km - currentKm
         const status: KmStatus =
-          diff <= 0 ? "atualizado" : diff > SUSPICIOUS_JUMP_KM && currentKm > 0 ? "verificar" : "atualizar"
+          diff === 0 ? "atualizado" : Math.abs(diff) > SUSPICIOUS_JUMP_KM && currentKm > 0 ? "verificar" : "atualizar"
 
-        return { vehicle, reading, diff, status }
+        return { vehicle, plateUsed, reading, diff, status }
       })
-      .sort((left, right) => right.diff - left.diff)
-  }, [vehicles, readings])
+      .sort((left, right) => Math.abs(right.diff) - Math.abs(left.diff))
+  }, [vehicles, readings, fleetPlates])
 
   const summary = useMemo(() => {
     return rows.reduce(
@@ -116,13 +135,16 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
         acc[row.status] += 1
         return acc
       },
-      { atualizar: 0, atualizado: 0, verificar: 0, "sem-leitura": 0, "sem-cartao": 0 } as Record<KmStatus, number>,
+      { atualizar: 0, atualizado: 0, verificar: 0, "sem-leitura": 0, "sem-cartao": 0, conflito: 0 } as Record<
+        KmStatus,
+        number
+      >,
     )
   }, [rows])
 
   const filteredRows = useMemo(() => {
     if (statusFilter === "todos") return rows
-    return rows.filter((row) => row.status === "atualizar" || row.status === "verificar")
+    return rows.filter((row) => row.status === "atualizar" || row.status === "verificar" || row.status === "conflito")
   }, [rows, statusFilter])
 
   const applyKm = async (row: KmRow) => {
@@ -185,7 +207,7 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
           <CardDescription>
             Usa o hodômetro informado pelo motorista na planilha da VELOE (coluna AO) para atualizar o KM atual do
             veículo. O cartão fica dentro do carro, então a leitura sempre segue a placa do cartão — mesmo quando
-            outro colaborador dirigiu.
+            outro colaborador dirigiu. Sem placa de cartão cadastrada, usamos a própria placa do veículo.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3 p-5 pt-0">
@@ -208,10 +230,10 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
           </Button>
 
           <p className="text-xs text-muted-foreground">
-            Saltos acima de {SUSPICIOUS_JUMP_KM.toLocaleString("pt-BR")} km ficam como &quot;Verificar&quot; e só são
-            aplicados manualmente.
-            {summary["sem-cartao"] > 0
-              ? ` ${summary["sem-cartao"]} veículo(s) sem placa de cartão cadastrada — preencha na aba "Placa do cartão".`
+            Saltos acima de {SUSPICIOUS_JUMP_KM.toLocaleString("pt-BR")} km (para mais ou para menos) ficam como
+            &quot;Verificar&quot; e só são aplicados manualmente.
+            {summary.conflito > 0
+              ? ` ${summary.conflito} veículo(s) com placa de cartão igual à placa de outro carro da frota — corrija na aba "Placa do cartão" antes de atualizar o KM.`
               : ""}
           </p>
         </CardContent>
@@ -250,9 +272,12 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
                     <div className="text-[0.78rem] text-muted-foreground">{row.vehicle.modelo}</div>
                   </TableCell>
                   <TableCell className="font-mono text-[0.85rem]">
-                    {row.vehicle.placaCartaoCombustivel || (
+                    {row.plateUsed || (
                       <span className="font-sans text-[0.72rem] text-muted-foreground">não cadastrada</span>
                     )}
+                    {row.plateUsed && !row.vehicle.placaCartaoCombustivel ? (
+                      <div className="font-sans text-[0.72rem] text-muted-foreground">placa do veículo</div>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     <div className="text-[0.9rem]">{row.reading?.nomeMotorista || "-"}</div>
@@ -264,7 +289,15 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
                   <TableCell className="text-center text-[0.9rem] font-medium">{formatKm(row.reading?.km)}</TableCell>
                   <TableCell className="text-center text-[0.9rem]">
                     {row.reading ? (
-                      <span className={row.diff > 0 ? "font-medium text-sky-700" : "text-muted-foreground"}>
+                      <span
+                        className={
+                          row.diff > 0
+                            ? "font-medium text-sky-700"
+                            : row.diff < 0
+                            ? "font-medium text-rose-700"
+                            : "text-muted-foreground"
+                        }
+                      >
                         {row.diff > 0 ? `+${row.diff.toLocaleString("pt-BR")}` : row.diff.toLocaleString("pt-BR")}
                       </span>
                     ) : (
@@ -273,7 +306,9 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
                   </TableCell>
                   <TableCell className="text-center">
                     <Badge variant="outline" className={STATUS_CLASSES[row.status]}>
-                      {row.status === "verificar" ? <AlertTriangle className="mr-1 h-3 w-3" /> : null}
+                      {row.status === "verificar" || row.status === "conflito" ? (
+                        <AlertTriangle className="mr-1 h-3 w-3" />
+                      ) : null}
                       {STATUS_LABELS[row.status]}
                     </Badge>
                   </TableCell>
