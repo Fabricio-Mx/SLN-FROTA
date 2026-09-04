@@ -22,14 +22,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { useVehicles } from "@/hooks/use-vehicles"
-import { useColaboradores } from "@/hooks/use-colaboradores"
-import { useDriverLinks } from "@/hooks/use-driver-links"
 import {
-  buildDriverMatches,
-  collectAgregadoDrivers,
-  collectDriverSources,
   collectOdometerReadings,
-  mapDriversToVehicles,
   normalizePlate,
   type OdometerReading,
 } from "@/lib/driver-links-shared"
@@ -39,12 +33,11 @@ import type { Vehicle } from "@/lib/types"
 // Acima disso o salto de hodometro provavelmente e erro de digitacao do motorista.
 const SUSPICIOUS_JUMP_KM = 30_000
 
-type KmStatus = "atualizar" | "atualizado" | "verificar" | "sem-leitura"
+type KmStatus = "atualizar" | "atualizado" | "verificar" | "sem-leitura" | "sem-cartao"
 
 type KmRow = {
   vehicle: Vehicle
   reading: OdometerReading | null
-  origem: "cartao" | "motorista" | null
   diff: number
   status: KmStatus
 }
@@ -56,6 +49,7 @@ const STATUS_LABELS: Record<KmStatus, string> = {
   atualizado: "Em dia",
   verificar: "Verificar",
   "sem-leitura": "Sem leitura",
+  "sem-cartao": "Sem cartão",
 }
 
 const STATUS_CLASSES: Record<KmStatus, string> = {
@@ -63,6 +57,7 @@ const STATUS_CLASSES: Record<KmStatus, string> = {
   atualizado: "border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
   verificar: "border-amber-200 bg-amber-100 text-amber-700 hover:bg-amber-100",
   "sem-leitura": "border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-100",
+  "sem-cartao": "border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-100",
 }
 
 function formatKm(value: number | null | undefined): string {
@@ -84,8 +79,6 @@ type AjusteKmProps = {
 
 export function AjusteKm({ records, canManage }: AjusteKmProps) {
   const { vehicles, updateVehicle } = useVehicles(true)
-  const { colaboradores } = useColaboradores(true)
-  const { links } = useDriverLinks(true)
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("atualizar")
   const [savingId, setSavingId] = useState<string | null>(null)
@@ -93,46 +86,29 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
 
   const readings = useMemo(() => collectOdometerReadings(records), [records])
 
-  // Motorista vinculado -> veiculo atribuido a ele, quando a placa do cartao nao bate.
-  const vehicleIdByDriverKey = useMemo(() => {
-    const agregados = collectAgregadoDrivers(vehicles)
-    const matches = buildDriverMatches(collectDriverSources(records), colaboradores, links, agregados)
-    return mapDriversToVehicles(matches, vehicles)
-  }, [records, colaboradores, links, vehicles])
-
   const rows = useMemo<KmRow[]>(() => {
-    const readingByVehicleId = new Map<string, { reading: OdometerReading; origem: "cartao" | "motorista" }>()
-
-    for (const [driverKey, vehicleId] of vehicleIdByDriverKey) {
-      const reading = readings.byDriver.get(driverKey)
-      if (reading) readingByVehicleId.set(vehicleId, { reading, origem: "motorista" })
-    }
-
-    for (const vehicle of vehicles) {
-      // Casa pela placa registrada no cartao; a placa do veiculo nao serve, o cartao segue a pessoa.
-      const plateKey = normalizePlate(vehicle.placaCartaoCombustivel || "")
-      if (!plateKey) continue
-
-      const reading = readings.byPlate.get(plateKey)
-      if (reading) readingByVehicleId.set(vehicle.id, { reading, origem: "cartao" })
-    }
-
     return vehicles
       .map((vehicle) => {
-        const match = readingByVehicleId.get(vehicle.id)
-        if (!match) {
-          return { vehicle, reading: null, origem: null, diff: 0, status: "sem-leitura" as KmStatus }
+        // O cartao fica dentro do veiculo, entao o hodometro sempre segue a placa do cartao.
+        const plateKey = normalizePlate(vehicle.placaCartaoCombustivel || "")
+        if (!plateKey) {
+          return { vehicle, reading: null, diff: 0, status: "sem-cartao" as KmStatus }
+        }
+
+        const reading = readings.byPlate.get(plateKey) ?? null
+        if (!reading) {
+          return { vehicle, reading: null, diff: 0, status: "sem-leitura" as KmStatus }
         }
 
         const currentKm = vehicle.km ?? 0
-        const diff = match.reading.km - currentKm
+        const diff = reading.km - currentKm
         const status: KmStatus =
           diff <= 0 ? "atualizado" : diff > SUSPICIOUS_JUMP_KM && currentKm > 0 ? "verificar" : "atualizar"
 
-        return { vehicle, reading: match.reading, origem: match.origem, diff, status }
+        return { vehicle, reading, diff, status }
       })
       .sort((left, right) => right.diff - left.diff)
-  }, [vehicles, readings, vehicleIdByDriverKey])
+  }, [vehicles, readings])
 
   const summary = useMemo(() => {
     return rows.reduce(
@@ -140,7 +116,7 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
         acc[row.status] += 1
         return acc
       },
-      { atualizar: 0, atualizado: 0, verificar: 0, "sem-leitura": 0 } as Record<KmStatus, number>,
+      { atualizar: 0, atualizado: 0, verificar: 0, "sem-leitura": 0, "sem-cartao": 0 } as Record<KmStatus, number>,
     )
   }, [rows])
 
@@ -208,7 +184,8 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
           </CardTitle>
           <CardDescription>
             Usa o hodômetro informado pelo motorista na planilha da VELOE (coluna AO) para atualizar o KM atual do
-            veículo. O veículo é encontrado pela placa do cartão e, quando não bate, pelo colaborador vinculado.
+            veículo. O cartão fica dentro do carro, então a leitura sempre segue a placa do cartão — mesmo quando
+            outro colaborador dirigiu.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3 p-5 pt-0">
@@ -233,6 +210,9 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
           <p className="text-xs text-muted-foreground">
             Saltos acima de {SUSPICIOUS_JUMP_KM.toLocaleString("pt-BR")} km ficam como &quot;Verificar&quot; e só são
             aplicados manualmente.
+            {summary["sem-cartao"] > 0
+              ? ` ${summary["sem-cartao"]} veículo(s) sem placa de cartão cadastrada — preencha na aba "Placa do cartão".`
+              : ""}
           </p>
         </CardContent>
       </Card>
@@ -242,7 +222,8 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
           <TableHeader>
             <TableRow className="bg-muted/50">
               <TableHead className="text-[0.88rem] font-semibold">Veículo</TableHead>
-              <TableHead className="text-[0.88rem] font-semibold">Motorista do abastecimento</TableHead>
+              <TableHead className="text-[0.88rem] font-semibold">Placa do cartão</TableHead>
+              <TableHead className="text-[0.88rem] font-semibold">Quem abasteceu</TableHead>
               <TableHead className="text-center text-[0.88rem] font-semibold">KM no sistema</TableHead>
               <TableHead className="text-center text-[0.88rem] font-semibold">KM informado</TableHead>
               <TableHead className="text-center text-[0.88rem] font-semibold">Diferença</TableHead>
@@ -253,7 +234,7 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
           <TableBody>
             {filteredRows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   Nenhum veículo com KM pendente nesta competência.
                 </TableCell>
               </TableRow>
@@ -268,12 +249,15 @@ export function AjusteKm({ records, canManage }: AjusteKmProps) {
                     <div className="font-mono text-[0.95rem] font-semibold text-foreground">{row.vehicle.placa}</div>
                     <div className="text-[0.78rem] text-muted-foreground">{row.vehicle.modelo}</div>
                   </TableCell>
+                  <TableCell className="font-mono text-[0.85rem]">
+                    {row.vehicle.placaCartaoCombustivel || (
+                      <span className="font-sans text-[0.72rem] text-muted-foreground">não cadastrada</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="text-[0.9rem]">{row.reading?.nomeMotorista || "-"}</div>
                     {row.reading ? (
-                      <div className="text-[0.72rem] text-muted-foreground">
-                        {formatDate(row.reading.dateTime)} · {row.origem === "cartao" ? "placa do cartão" : "colaborador vinculado"}
-                      </div>
+                      <div className="text-[0.72rem] text-muted-foreground">{formatDate(row.reading.dateTime)}</div>
                     ) : null}
                   </TableCell>
                   <TableCell className="text-center text-[0.9rem]">{formatKm(row.vehicle.km)}</TableCell>

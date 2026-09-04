@@ -120,38 +120,31 @@ export function normalizePlate(value: string): string {
   return (value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "")
 }
 
-// Ultima leitura de hodometro por placa de cartao e por motorista (coluna AO da VELOE).
+// Ultima leitura de hodometro por placa de cartao (coluna AO da VELOE).
 export function collectOdometerReadings(records: FuelLikeRecord[]): {
   byPlate: Map<string, OdometerReading>
-  byDriver: Map<string, OdometerReading>
 } {
   const byPlate = new Map<string, OdometerReading>()
-  const byDriver = new Map<string, OdometerReading>()
-
-  const keepLatest = (target: Map<string, OdometerReading>, key: string, reading: OdometerReading) => {
-    if (!key) return
-    const current = target.get(key)
-    if (!current || reading.dateTime > current.dateTime) {
-      target.set(key, reading)
-    }
-  }
 
   for (const record of records) {
     const km = typeof record.km === "number" ? record.km : null
     if (!km || km <= 0 || !record.dateTime) continue
 
-    const reading: OdometerReading = {
+    const key = normalizePlate(record.cardPlate)
+    if (!key) continue
+
+    const current = byPlate.get(key)
+    if (current && current.dateTime >= record.dateTime) continue
+
+    byPlate.set(key, {
       km,
       dateTime: record.dateTime,
       nomeMotorista: (record.nomeMotorista || "").trim(),
       cardPlate: (record.cardPlate || "").trim(),
-    }
-
-    keepLatest(byPlate, normalizePlate(record.cardPlate), reading)
-    keepLatest(byDriver, normalizeDriverKey(record.nomeMotorista), reading)
+    })
   }
 
-  return { byPlate, byDriver }
+  return { byPlate }
 }
 
 type AgregadoVehicleLike = {
