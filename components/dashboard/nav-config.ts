@@ -25,6 +25,7 @@ export type DashboardSection =
   | "combustivel"
   | "multas"
   | "ajuste-geral"
+  | "documentos"
 
 export type DashboardSectionItem = {
   id: DashboardSection
@@ -93,6 +94,15 @@ export const VISIBLE_DASHBOARD_SECTIONS = DASHBOARD_SECTIONS.filter((section) =>
   return true
 })
 
+// Fica no grupo "Relatorios" da sidebar, por isso nao entra em DASHBOARD_SECTIONS.
+export const DOCUMENTOS_SECTION: DashboardSectionItem = {
+  id: "documentos",
+  href: "/dashboard/documentos",
+  label: "Documentos",
+  description: "CRLV dos veículos, CNH dos colaboradores e termos de responsabilidade.",
+  icon: FileText,
+}
+
 export const DASHBOARD_SECTION_BUTTON_STYLES: Record<DashboardSection, { active: string; inactive: string }> = {
   overview: {
     active: "border-[#7CB342] bg-[#7CB342] text-white hover:bg-[#6d9d39] hover:border-[#6d9d39]",
@@ -122,6 +132,10 @@ export const DASHBOARD_SECTION_BUTTON_STYLES: Record<DashboardSection, { active:
     active: "border-[#0f766e] bg-[#0f766e] text-white hover:bg-[#0d635c] hover:border-[#0d635c]",
     inactive: "border-transparent bg-transparent text-[#155e57] hover:bg-[#ecfaf7] hover:border-[#c9ece6]",
   },
+  documentos: {
+    active: "border-[#d97706] bg-[#d97706] text-white hover:bg-[#b96405] hover:border-[#b96405]",
+    inactive: "border-transparent bg-transparent text-[#92620a] hover:bg-[#fff7ed] hover:border-[#fbdcb4]",
+  },
 }
 
 const DEFAULT_SIDEBAR_NAV_COLORS = {
@@ -144,7 +158,7 @@ export const SIDEBAR_NAV_PALETTE_DARK: SectionNavPalette = Object.fromEntries(
 )
 
 export function getSectionMeta(section: DashboardSection): Pick<DashboardSectionItem, "label" | "description"> {
-  const matchedSection = DASHBOARD_SECTIONS.find((item) => item.id === section)
+  const matchedSection = [...DASHBOARD_SECTIONS, DOCUMENTOS_SECTION].find((item) => item.id === section)
 
   return {
     label: matchedSection?.label || "Painel Geral",
@@ -170,7 +184,7 @@ export function buildSidebarNavGroups(isMaster: boolean): SectionNavGroup[] {
         { id: "desempenho", label: "Desempenho", icon: LineChart },
         { id: "custos", label: "Custos", icon: Wallet },
         { id: "manutencoes", label: "Manutenções", icon: Wrench },
-        { id: "documentos", label: "Documentos", icon: FileText },
+        { id: DOCUMENTOS_SECTION.id, label: DOCUMENTOS_SECTION.label, icon: FileText, href: DOCUMENTOS_SECTION.href },
       ],
     },
     { title: "Configurações", items: configItems },

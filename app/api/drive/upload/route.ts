@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     const safeName = sanitizeName(file.name || "arquivo")
     const finalName = `${sanitizeName(label)}_${Date.now()}_${safeName}`
     const driveClients = await getDriveClients()
-    let lastError: unknown = null
+    const failures: unknown[] = []
 
     // Tenta OAuth e, se o token estiver invalido, cai para a conta de servico.
     for (const drive of driveClients) {
@@ -65,11 +65,12 @@ export async function POST(req: Request) {
 
         return NextResponse.json(created.data)
       } catch (error) {
-        lastError = error
+        failures.push(error)
       }
     }
 
-    throw lastError ?? new Error("Nenhuma credencial do Drive disponivel.")
+    // A conta de servico nunca consegue criar arquivo em pasta pessoal, entao o erro do OAuth e o relevante.
+    throw failures[0] ?? new Error("Nenhuma credencial do Drive disponivel.")
   } catch (err) {
     const message = describeDriveError(err)
     const isExpiredAuth = message.toLowerCase().includes("invalid_grant")

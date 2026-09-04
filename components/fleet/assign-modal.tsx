@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
+import { AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -24,6 +25,7 @@ interface AssignModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   vehicle: Vehicle | null
+  vehicles: Vehicle[]
   colaboradores: Colaborador[]
   onAssign: (vehicleId: string, colaboradorId: string) => void
 }
@@ -32,17 +34,33 @@ export function AssignModal({
   open,
   onOpenChange,
   vehicle,
+  vehicles,
   colaboradores,
   onAssign,
 }: AssignModalProps) {
   const [selectedColaboradorId, setSelectedColaboradorId] = useState<string>("")
 
-  const handleAssign = () => {
-    if (vehicle && selectedColaboradorId) {
-      onAssign(vehicle.id, selectedColaboradorId)
-      setSelectedColaboradorId("")
-      onOpenChange(false)
+  // Cada colaborador pode ficar com um veiculo so.
+  const vehicleByColaboradorId = useMemo(() => {
+    const map = new Map<string, Vehicle>()
+    for (const item of vehicles) {
+      if (item.colaboradorId && item.id !== vehicle?.id) map.set(item.colaboradorId, item)
     }
+    return map
+  }, [vehicles, vehicle?.id])
+
+  const colaboradorAtual = vehicle?.colaboradorId
+    ? colaboradores.find((item) => item.id === vehicle.colaboradorId) ?? null
+    : null
+
+  const selectedBlocker = selectedColaboradorId ? vehicleByColaboradorId.get(selectedColaboradorId) ?? null : null
+
+  const handleAssign = () => {
+    if (!vehicle || !selectedColaboradorId || selectedBlocker || colaboradorAtual) return
+
+    onAssign(vehicle.id, selectedColaboradorId)
+    setSelectedColaboradorId("")
+    onOpenChange(false)
   }
 
   const handleOpenChange = (open: boolean) => {
@@ -62,12 +80,24 @@ export function AssignModal({
             <span className="font-semibold">{vehicle?.placa}</span> ({vehicle?.modelo}).
           </DialogDescription>
         </DialogHeader>
-        <div className="py-4">
+        <div className="space-y-3 py-4">
+          {colaboradorAtual ? (
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-[0.82rem] text-amber-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                Este veículo já está atribuído a outro colaborador (
+                <span className="font-semibold">{colaboradorAtual.nome}</span>). Remova o vínculo atual antes de
+                atribuir a outra pessoa.
+              </span>
+            </div>
+          ) : null}
+
           <div className="grid gap-2">
             <Label htmlFor="colaborador">Colaborador</Label>
             <Select
               value={selectedColaboradorId}
               onValueChange={setSelectedColaboradorId}
+              disabled={Boolean(colaboradorAtual)}
             >
               <SelectTrigger id="colaborador">
                 <SelectValue placeholder="Selecione um colaborador" />
@@ -78,14 +108,25 @@ export function AssignModal({
                     Nenhum colaborador cadastrado
                   </SelectItem>
                 ) : (
-                  colaboradores.map((colaborador) => (
-                    <SelectItem key={colaborador.id} value={colaborador.id}>
-                      {colaborador.nome} - {colaborador.departamento}
-                    </SelectItem>
-                  ))
+                  colaboradores.map((colaborador) => {
+                    const ocupado = vehicleByColaboradorId.get(colaborador.id)
+
+                    return (
+                      <SelectItem key={colaborador.id} value={colaborador.id} disabled={Boolean(ocupado)}>
+                        {colaborador.nome} - {colaborador.departamento}
+                        {ocupado ? ` (já possui ${ocupado.placa})` : ""}
+                      </SelectItem>
+                    )
+                  })
                 )}
               </SelectContent>
             </Select>
+            {selectedBlocker ? (
+              <p className="text-sm text-destructive">
+                Este colaborador já possui o veículo {selectedBlocker.placa}. Cada colaborador pode ter apenas um
+                veículo.
+              </p>
+            ) : null}
           </div>
         </div>
         <DialogFooter>
@@ -98,7 +139,12 @@ export function AssignModal({
           </Button>
           <Button
             onClick={handleAssign}
-            disabled={!selectedColaboradorId || colaboradores.length === 0}
+            disabled={
+              !selectedColaboradorId ||
+              colaboradores.length === 0 ||
+              Boolean(selectedBlocker) ||
+              Boolean(colaboradorAtual)
+            }
           >
             Atribuir
           </Button>

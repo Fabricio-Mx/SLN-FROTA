@@ -63,6 +63,11 @@ const AjusteGeral = dynamic(
   { loading: () => <FuelSectionLoading /> }
 )
 
+const DocumentosPanel = dynamic(
+  () => import("@/components/dashboard/documentos-panel").then((module) => module.DocumentosPanel),
+  { loading: () => <FuelSectionLoading /> }
+)
+
 const DEFAULT_VEHICLE_FILTERS: VehicleFilters = {
   search: "",
   searchScope: "todos",
@@ -571,6 +576,20 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
   }
 
   const handleSaveColaborador = async (data: ColaboradorFormData, veiculoId?: string | null, veiculoKm?: number | null) => {
+    const veiculoAlvo = veiculoId ? vehicles.find((item) => item.id === veiculoId) : null
+    if (
+      veiculoAlvo?.colaboradorId &&
+      (!editingColaborador || veiculoAlvo.colaboradorId !== editingColaborador.id)
+    ) {
+      const atual = colaboradoresById.get(veiculoAlvo.colaboradorId)
+      toast({
+        title: "Veículo já atribuído",
+        description: `O veículo ${veiculoAlvo.placa} já está atribuído a outro colaborador${atual ? ` (${atual.nome})` : ""}.`,
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       let colaboradorId: string
 
@@ -659,6 +678,26 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
   const handleConfirmAssign = async (vehicleId: string, colaboradorId: string) => {
     const vehicle = vehicles.find((item) => item.id === vehicleId)
     if (!vehicle) return
+
+    if (vehicle.colaboradorId && vehicle.colaboradorId !== colaboradorId) {
+      const atual = colaboradoresById.get(vehicle.colaboradorId)
+      toast({
+        title: "Veículo já atribuído",
+        description: `Este veículo já está atribuído a outro colaborador${atual ? ` (${atual.nome})` : ""}. Remova o vínculo atual antes de atribuir a outra pessoa.`,
+        variant: "destructive",
+      })
+      return
+    }
+
+    const outroVeiculo = vehicles.find((item) => item.colaboradorId === colaboradorId && item.id !== vehicleId)
+    if (outroVeiculo) {
+      toast({
+        title: "Colaborador já possui veículo",
+        description: `Cada colaborador pode ter apenas um veículo. O veículo ${outroVeiculo.placa} já está atribuído a essa pessoa.`,
+        variant: "destructive",
+      })
+      return
+    }
 
     try {
       await updateVehicle(vehicleId, { ...vehicle, colaboradorId })
@@ -953,6 +992,14 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       )
     }
 
+    if (resolvedInitialSection === "documentos") {
+      return (
+        <div className="w-full">
+          <DocumentosPanel canManage={canAddColaboradores(userRole)} />
+        </div>
+      )
+    }
+
     return renderOverview()
   }
   return (
@@ -1029,6 +1076,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
         open={isAssignModalOpen}
         onOpenChange={setIsAssignModalOpen}
         vehicle={assigningVehicle}
+        vehicles={vehicles}
         colaboradores={colaboradores}
         onAssign={handleConfirmAssign}
       />
