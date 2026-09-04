@@ -10,6 +10,14 @@ const TEMPLATE_PATH = path.join(
   "Termo de Responsabilidade.docx",
 )
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const name = searchParams.get("name") || ""
@@ -17,6 +25,7 @@ export async function GET(req: Request) {
   const date = searchParams.get("date") || ""
   const md = searchParams.get("md") || ""
   const plc = searchParams.get("plc") || ""
+  const download = searchParams.get("download") === "1"
 
   if (!name || !inumber || !date || !md || !plc) {
     return new NextResponse(
@@ -73,17 +82,18 @@ export async function GET(req: Request) {
       compression: "DEFLATE"
     })
 
-    // Return the filled docx file to be opened in Word/browser
+    const safeName = name.replace(/["\\\r\n]/g, "").trim() || "Colaborador"
+
     return new NextResponse(Buffer.from(docxBuffer), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": `inline; filename="Termo de ${name}.docx"`,
+        "Content-Disposition": `${download ? "attachment" : "inline"}; filename="Termo de ${safeName}.docx"`,
       },
     })
   } catch (err) {
     return new NextResponse(
-      `<html><body><h1>Erro</h1><p>Falha ao processar o termo: ${err instanceof Error ? err.message : "Erro desconhecido"}</p><p>Certifique-se de que o LibreOffice está instalado no sistema.</p></body></html>`,
-      { headers: { "Content-Type": "text/html" } },
+      `<html><body><h1>Erro</h1><p>Falha ao processar o termo: ${escapeHtml(err instanceof Error ? err.message : "Erro desconhecido")}</p></body></html>`,
+      { headers: { "Content-Type": "text/html; charset=utf-8" } },
     )
   }
 }

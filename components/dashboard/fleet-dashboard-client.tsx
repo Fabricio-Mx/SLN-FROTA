@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import dynamic from "next/dynamic"
 import Link from "next/link"
 import { ArrowRight, CalendarRange, Car, CircleDollarSign, Download, Fuel, Plus, Search, Sparkles, Users } from "lucide-react"
@@ -44,7 +44,9 @@ import { FuelStatusAlert } from "@/components/fuel/fuel-status-alert"
 import { MultasDashboard } from "@/components/multas/multas-dashboard"
 import { useVehicles } from "@/hooks/use-vehicles"
 import { refreshColaboradores, useColaboradores } from "@/hooks/use-colaboradores"
+import { useDriverLinks } from "@/hooks/use-driver-links"
 import { useMultas } from "@/hooks/use-multas"
+import { mapVehicleCardPlates } from "@/lib/driver-links-shared"
 import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
 import { isAgregadoVehicle, isVisibleInFrotaSection } from "@/lib/vehicle-classification"
 import type { Vehicle, VehicleFormData, VehicleFilters, Colaborador, ColaboradorFormData } from "@/lib/types"
@@ -53,6 +55,11 @@ export type { DashboardSection } from "@/components/dashboard/nav-config"
 
 const FuelWorkspace = dynamic(
   () => import("@/components/fuel/fuel-workspace").then((module) => module.FuelWorkspace),
+  { loading: () => <FuelSectionLoading /> }
+)
+
+const AjusteGeral = dynamic(
+  () => import("@/components/dashboard/ajuste-geral").then((module) => module.AjusteGeral),
   { loading: () => <FuelSectionLoading /> }
 )
 
@@ -140,7 +147,11 @@ const DASHBOARD_HEADER_CARD_CLASS = "w-full rounded-2xl border border-border bg-
 const DASHBOARD_CONTENT_STAGE_CLASS = "min-h-[calc(100vh-18rem)] w-full max-w-none"
 
 export function FleetDashboardClient({ initialUser, initialSection = "overview" }: FleetDashboardClientProps) {
-  const needsFuelData = initialSection === "overview" || initialSection === "combustivel"
+  const needsFuelData =
+    initialSection === "overview" ||
+    initialSection === "combustivel" ||
+    initialSection === "ajuste-geral" ||
+    initialSection === "veiculos-frota"
 
   if (!needsFuelData) {
     return <FleetDashboardContent initialUser={initialUser} initialSection={initialSection} />
@@ -170,6 +181,26 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     deleteColaborador,
   } = useColaboradores(shouldLoadColaboradores)
   const { multas } = useMultas(shouldLoadMultas)
+  const { links: driverLinks } = useDriverLinks(resolvedInitialSection === "veiculos-frota")
+
+  const fuelRecords = fuelData?.records
+  const fuelAvailableMonths = fuelData?.availableMonths
+  const setSelectedFuelMonth = fuelData?.setSelectedMonth
+
+  // A competencia atual pode ainda nao ter importacao; para o cartao usamos o ultimo mes com dados.
+  useEffect(() => {
+    if (resolvedInitialSection !== "veiculos-frota") return
+    if (!setSelectedFuelMonth || !fuelAvailableMonths) return
+    if ((fuelRecords?.length ?? 0) > 0) return
+
+    const latestWithData = fuelAvailableMonths.find((month) => month.recordCount > 0)
+    if (latestWithData) setSelectedFuelMonth(latestWithData.month)
+  }, [resolvedInitialSection, fuelRecords?.length, fuelAvailableMonths, setSelectedFuelMonth])
+
+  const cardPlatesByVehicleId = useMemo(() => {
+    if (resolvedInitialSection !== "veiculos-frota") return undefined
+    return mapVehicleCardPlates(fuelRecords ?? [], vehicles, colaboradores, driverLinks)
+  }, [resolvedInitialSection, fuelRecords, vehicles, colaboradores, driverLinks])
 
   const userRole: UserRole = initialUser.role || "consulta"
   const isMaster = initialUser.isMaster === true
@@ -845,6 +876,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
             vehicles={veiculosFrota}
             colaboradores={colaboradores}
             canManage={canAddVehicles(userRole)}
+            cardPlatesByVehicleId={cardPlatesByVehicleId}
             onEdit={handleEditVehicle}
             onDelete={handleDeleteVehicleClick}
             onAssign={handleAssignVehicle}
@@ -909,6 +941,14 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
             canManage={canManageMultas(userRole)}
             canEditRhStatus={canEditMultaRhStatus(userRole)}
           />
+        </div>
+      )
+    }
+
+    if (resolvedInitialSection === "ajuste-geral") {
+      return (
+        <div className="w-full">
+          <AjusteGeral canManage={canAddColaboradores(userRole)} />
         </div>
       )
     }

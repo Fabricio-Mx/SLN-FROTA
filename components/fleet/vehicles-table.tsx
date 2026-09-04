@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { CreditCard, Edit, MoreHorizontal, Trash2, UserPlus, UserMinus } from "lucide-react"
+import { CreditCard, Download, Edit, Eye, MoreHorizontal, Trash2, UserPlus, UserMinus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -21,12 +21,14 @@ import {
 } from "@/components/ui/table"
 import { getVehicleReviewMilestone, isVehicleDueForReview } from "@/lib/fleet-maintenance"
 import { getVehicleVisual } from "@/lib/vehicle-icons"
-import type { Vehicle, Colaborador } from "@/lib/types"
+import type { VehicleCardPlate } from "@/lib/driver-links-shared"
+import type { Vehicle, Colaborador, DriveFile } from "@/lib/types"
 
 interface VehiclesTableProps {
   vehicles: Vehicle[]
   colaboradores: Colaborador[]
   canManage?: boolean
+  cardPlatesByVehicleId?: Map<string, VehicleCardPlate>
   onEdit: (vehicle: Vehicle) => void
   onDelete: (id: string) => void
   onAssign: (vehicle: Vehicle) => void
@@ -116,16 +118,29 @@ function getCartaoLabel(cartao: Vehicle["cartaoCombustivel"]): string {
   return "Veloe/Ticket"
 }
 
-export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdit, onDelete, onAssign, onUnassign }: VehiclesTableProps) {
+// Termo assinado que o colaborador envia em "Outros Documentos" (nome contem TERMO).
+function findTermoDocumento(colaborador: Colaborador): DriveFile | null {
+  const documentos = colaborador.documentos || []
+  const matches = documentos.filter((doc) =>
+    (doc.name || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .includes("TERMO"),
+  )
+
+  return matches.length > 0 ? matches[matches.length - 1] : null
+}
+
+export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardPlatesByVehicleId, onEdit, onDelete, onAssign, onUnassign }: VehiclesTableProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const stickyScrollbarRef = useRef<HTMLDivElement | null>(null)
   const [stickyScrollWidth, setStickyScrollWidth] = useState(0)
   const [showStickyScrollbar, setShowStickyScrollbar] = useState(false)
 
-  const getColaboradorName = (colaboradorId: string | null | undefined) => {
+  const getColaborador = (colaboradorId: string | null | undefined) => {
     if (!colaboradorId) return null
-    const colaborador = colaboradores.find((c) => c.id === colaboradorId)
-    return colaborador ? colaborador.nome : null
+    return colaboradores.find((c) => c.id === colaboradorId) ?? null
   }
 
   useEffect(() => {
@@ -225,7 +240,11 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
             const hasContractExpiry = vehicle.tipoPropriedade === "alugado" && Boolean(vehicle.dataVencimentoContrato)
             const expired = hasContractExpiry && isContractExpired(vehicle.dataVencimentoContrato)
             const expiring = hasContractExpiry && isContractExpiring(vehicle.dataVencimentoContrato)
-            const colaboradorNome = getColaboradorName(vehicle.colaboradorId)
+            const colaborador = getColaborador(vehicle.colaboradorId)
+            const colaboradorNome = colaborador?.nome ?? null
+            const termoDoc = colaborador ? findTermoDocumento(colaborador) : null
+            const cardPlateFromFuel = cardPlatesByVehicleId?.get(vehicle.id) ?? null
+            const cardPlate = vehicle.placaCartaoCombustivel || cardPlateFromFuel?.cardPlate || ""
             const rowHighlightClass = getRowHighlightClass(expired, expiring, index)
             const reviewMilestone = getVehicleReviewMilestone(vehicle)
             const dueForReview = isVehicleDueForReview(vehicle)
@@ -376,18 +395,60 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, onEdi
                       <CreditCard className="h-3.5 w-3.5" />
                       {getCartaoLabel(vehicle.cartaoCombustivel)}
                     </Badge>
-                    {vehicle.placaCartaoCombustivel ? (
-                      <div className="text-[0.78rem] font-medium text-foreground">
-                        {vehicle.placaCartaoCombustivel}
+                    {cardPlate ? (
+                      <div
+                        className="font-mono text-[0.82rem] font-semibold text-foreground"
+                        title={
+                          vehicle.placaCartaoCombustivel
+                            ? "Placa cadastrada no veículo"
+                            : `Cartão usado por ${cardPlateFromFuel?.motorista} no combustível`
+                        }
+                      >
+                        {cardPlate}
                       </div>
-                    ) : null}
+                    ) : (
+                      <div className="text-[0.72rem] text-muted-foreground">placa não informada</div>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className="align-middle text-left">
                   {colaboradorNome ? (
-                    <Badge className="bg-primary/10 text-primary hover:bg-primary/20">
-                      {colaboradorNome}
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      <Badge className="bg-primary/10 text-primary hover:bg-primary/20">
+                        {colaboradorNome}
+                      </Badge>
+                      {termoDoc ? (
+                        <>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-slate-500 hover:text-violet-700" asChild>
+                            <a
+                              href={`/api/drive/file/${termoDoc.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={`Visualizar termo de responsabilidade (${termoDoc.name})`}
+                            >
+                              <Eye className="h-4 w-4" />
+                              <span className="sr-only">Visualizar termo</span>
+                            </a>
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-slate-500 hover:text-violet-700" asChild>
+                            <a
+                              href={`/api/drive/file/${termoDoc.id}?download=1`}
+                              title={`Baixar termo de responsabilidade (${termoDoc.name})`}
+                            >
+                              <Download className="h-4 w-4" />
+                              <span className="sr-only">Baixar termo</span>
+                            </a>
+                          </Button>
+                        </>
+                      ) : (
+                        <span
+                          className="text-[0.72rem] text-muted-foreground"
+                          title="Nenhum termo de responsabilidade anexado na ficha do colaborador"
+                        >
+                          sem termo
+                        </span>
+                      )}
+                    </div>
                   ) : (
                     <span className="text-[0.9rem] font-medium text-accent">Disponível</span>
                   )}

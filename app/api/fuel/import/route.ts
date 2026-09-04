@@ -111,6 +111,17 @@ function parseCurrency(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function parseOdometer(value: string): number | null {
+  if (!value) return null
+  const digits = value.replace(/[^\d]/g, "")
+  if (!digits) return null
+
+  const parsed = Number.parseInt(digits, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return null
+
+  return parsed
+}
+
 async function loadFuelStorage(): Promise<{
   currentRecords: FuelRecord[]
   history: FuelMonthArchive[]
@@ -244,6 +255,7 @@ export async function POST(req: Request) {
       const nomeMotorista = row[14] || ""
       const tipoCombustivel = row[26] || ""
       const valor = parseCurrency(row[29] || "")
+      const km = parseOdometer(row[40] || "")
       const dateTimeRaw = row[5] || ""
       const dateTime = parseDateTimeBr(dateTimeRaw)
       const postingDate = parseDateTimeBr(postingDateRaw)
@@ -259,6 +271,7 @@ export async function POST(req: Request) {
         valor,
         dateTime,
         postingDate: postingDate ?? null,
+        km,
       })
     }
 

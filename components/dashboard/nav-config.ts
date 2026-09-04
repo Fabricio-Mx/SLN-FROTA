@@ -1,6 +1,5 @@
 import {
   Car,
-  FileSignature,
   FileText,
   Fuel,
   LayoutDashboard,
@@ -8,6 +7,7 @@ import {
   Lock,
   Settings,
   ShieldAlert,
+  SlidersHorizontal,
   Truck,
   UserCog,
   Users,
@@ -24,6 +24,7 @@ export type DashboardSection =
   | "colaboradores"
   | "combustivel"
   | "multas"
+  | "ajuste-geral"
 
 export type DashboardSectionItem = {
   id: DashboardSection
@@ -78,6 +79,13 @@ export const DASHBOARD_SECTIONS: DashboardSectionItem[] = [
     description: "Acompanhamento de infrações, indicação de condutor, valores e status de tratativa.",
     icon: ShieldAlert,
   },
+  {
+    id: "ajuste-geral",
+    href: "/dashboard/ajuste-geral",
+    label: "Ajuste Geral",
+    description: "Vínculo dos dados importados (VELOE) com os cadastros do sistema.",
+    icon: SlidersHorizontal,
+  },
 ]
 
 export const VISIBLE_DASHBOARD_SECTIONS = DASHBOARD_SECTIONS.filter((section) => {
@@ -110,6 +118,10 @@ export const DASHBOARD_SECTION_BUTTON_STYLES: Record<DashboardSection, { active:
     active: "border-[#e0aa22] bg-[#e0aa22] text-white hover:bg-[#c99313] hover:border-[#c99313]",
     inactive: "border-transparent bg-transparent text-[#8a6a15] hover:bg-[#fff8df] hover:border-[#f2e6b8]",
   },
+  "ajuste-geral": {
+    active: "border-[#0f766e] bg-[#0f766e] text-white hover:bg-[#0d635c] hover:border-[#0d635c]",
+    inactive: "border-transparent bg-transparent text-[#155e57] hover:bg-[#ecfaf7] hover:border-[#c9ece6]",
+  },
 }
 
 const DEFAULT_SIDEBAR_NAV_COLORS = {
@@ -141,10 +153,7 @@ export function getSectionMeta(section: DashboardSection): Pick<DashboardSection
 }
 
 export function buildSidebarNavGroups(isMaster: boolean): SectionNavGroup[] {
-  const mainItems: SectionNavItem[] = [
-    ...VISIBLE_DASHBOARD_SECTIONS,
-    { id: "contratos", label: "Contratos", icon: FileSignature },
-  ]
+  const mainItems: SectionNavItem[] = [...VISIBLE_DASHBOARD_SECTIONS]
 
   const configItems: SectionNavItem[] = []
   if (isMaster) {

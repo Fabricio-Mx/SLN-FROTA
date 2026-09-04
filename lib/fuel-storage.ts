@@ -10,6 +10,8 @@ export type FuelRecord = {
   valor: number
   dateTime: string
   postingDate?: string | null
+  // Hodometro informado pelo motorista no abastecimento (coluna AO da planilha VELOE).
+  km?: number | null
 }
 
 export type FuelMonthArchive = {
@@ -119,6 +121,7 @@ function scoreFuelRecord(record: FuelRecord): number {
   if (!normalizeFuelIdentity(record.nomeMotorista).includes("veiculo sem motorista")) score += 1
   if (record.dateTime.length >= 19) score += 1
   if (record.postingDate?.trim()) score += 1
+  if (typeof record.km === "number" && record.km > 0) score += 1
 
   return score
 }

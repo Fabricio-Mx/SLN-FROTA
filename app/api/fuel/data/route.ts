@@ -85,6 +85,7 @@ function scoreApiFuelRecord(record: FuelRecord): number {
   if (record.nomeMotorista.trim()) score += 2
   if (!normalizeDuplicateToken(record.nomeMotorista).includes("veiculo sem motorista")) score += 1
   if (record.dateTime.length >= 19) score += 1
+  if (typeof record.km === "number" && record.km > 0) score += 1
 
   return score
 }

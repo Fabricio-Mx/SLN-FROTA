@@ -13,6 +13,7 @@ export type FuelRecord = {
   valor: number
   dateTime: string
   postingDate?: string | null
+  km?: number | null
 }
 
 export type FuelWeeklyComparisonMonth = {
