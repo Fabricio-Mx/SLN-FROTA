@@ -8,6 +8,7 @@ import {
   Settings,
   ShieldAlert,
   SlidersHorizontal,
+  Store,
   Truck,
   UserCog,
   Users,
@@ -24,6 +25,7 @@ export type DashboardSection =
   | "colaboradores"
   | "combustivel"
   | "multas"
+  | "fornecedores"
   | "ajuste-geral"
   | "documentos"
 
@@ -81,6 +83,13 @@ export const DASHBOARD_SECTIONS: DashboardSectionItem[] = [
     icon: ShieldAlert,
   },
   {
+    id: "fornecedores",
+    href: "/dashboard/fornecedores",
+    label: "Fornecedores",
+    description: "Cadastro de fornecedores, orçamentos de serviço, aprovação do gestor e anexos financeiros.",
+    icon: Store,
+  },
+  {
     id: "ajuste-geral",
     href: "/dashboard/ajuste-geral",
     label: "Ajuste Geral",
@@ -127,6 +136,10 @@ export const DASHBOARD_SECTION_BUTTON_STYLES: Record<DashboardSection, { active:
   multas: {
     active: "border-[#e0aa22] bg-[#e0aa22] text-white hover:bg-[#c99313] hover:border-[#c99313]",
     inactive: "border-transparent bg-transparent text-[#8a6a15] hover:bg-[#fff8df] hover:border-[#f2e6b8]",
+  },
+  fornecedores: {
+    active: "border-[#c2410c] bg-[#c2410c] text-white hover:bg-[#a5350a] hover:border-[#a5350a]",
+    inactive: "border-transparent bg-transparent text-[#9a3412] hover:bg-[#fff3ec] hover:border-[#fbd7c2]",
   },
   "ajuste-geral": {
     active: "border-[#0f766e] bg-[#0f766e] text-white hover:bg-[#0d635c] hover:border-[#0d635c]",

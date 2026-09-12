@@ -15,12 +15,15 @@ export {
   ROLE_DESCRIPTIONS,
   USER_ROLES,
   canCreateUsers,
+  hasMasterAccess,
   canEditData,
   canDeleteData,
   canAddVehicles,
   canAddColaboradores,
   canManageMultas,
   canEditMultaRhStatus,
+  canManageFornecedores,
+  canApproveOrdemServico,
 } from "@/lib/auth-shared"
 
 // Verifica a sessao do usuario a partir do cookie (server-only)

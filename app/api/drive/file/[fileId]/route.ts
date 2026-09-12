@@ -7,13 +7,14 @@ export const runtime = "nodejs"
 
 type DriveFileRef = { id?: string; name?: string; mimeType?: string | null }
 
-// Só libera arquivos que estejam realmente vinculados a um colaborador ou veículo.
+// Só libera arquivos que estejam realmente vinculados a um colaborador, veículo ou ordem de serviço.
 async function findLinkedFile(fileId: string): Promise<DriveFileRef | null> {
   const supabase = createAdminClient()
 
   const sources: { table: string; columns: string[] }[] = [
     { table: "fleet_colaboradores", columns: ["documentos", "cnh_arquivos", "imagens_veiculo"] },
     { table: "fleet_vehicles", columns: ["checklists", "imagens"] },
+    { table: "fleet_ordens_servico", columns: ["boleto_arquivos", "nota_fiscal_arquivos"] },
   ]
 
   for (const source of sources) {

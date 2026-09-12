@@ -126,6 +126,74 @@ export interface Multa {
 
 export type MultaFormData = Omit<Multa, 'id' | 'createdAt' | 'updatedAt'>
 
+export type FornecedorRegiao = 'norte' | 'nordeste' | 'centro_oeste' | 'sudeste' | 'sul'
+
+export interface Fornecedor {
+  id: string
+  razaoSocial: string
+  cnpj: string
+  telefone: string
+  email: string
+  responsavel: string
+  regiao: FornecedorRegiao | null
+  uf: string
+  chavePix: string
+  banco: string
+  agencia: string
+  conta: string
+  observacoes: string
+  ativo: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type FornecedorFormData = Omit<Fornecedor, 'id' | 'createdAt' | 'updatedAt'>
+
+export type OrdemServicoStatus = 'aguardando' | 'aprovado' | 'rejeitado' | 'concluido'
+
+export interface BoletoParcela {
+  id: string
+  numero: number
+  vencimento: string
+  valor: number | null
+  pago: boolean
+  pagoEm: string | null
+  arquivos: DriveFile[]
+}
+
+export interface OrdemServico {
+  id: string
+  fornecedorId: string | null
+  vehicleId: string | null
+  placa: string
+  descricao: string
+  valorPecas: number
+  valorMaoObra: number
+  valorTotal: number
+  kmVeiculo: number | null
+  dataAbertura: string
+  previsaoEntrega: string
+  status: OrdemServicoStatus
+  aprovadoPor: string | null
+  aprovadoEm: string | null
+  motivoRejeicao: string | null
+  parcelasQuantidade: number | null
+  prazosDias: number[]
+  boletoVencimento: string
+  boletoValor: number | null
+  boletoArquivos: DriveFile[]
+  boletoParcelas: BoletoParcela[]
+  notaFiscalNumero: string
+  notaFiscalEmissao: string
+  notaFiscalValor: number | null
+  notaFiscalArquivos: DriveFile[]
+  observacoes: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type OrdemServicoFormData = Omit<OrdemServico, 'id' | 'createdAt' | 'updatedAt'>
+
 export interface VehicleFilters {
   search: string
   searchScope: 'todos' | 'placa_veiculo' | 'placa_cartao' | 'colaborador'

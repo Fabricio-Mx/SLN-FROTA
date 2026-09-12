@@ -48,6 +48,12 @@ export function canCreateUsers(role: UserRole): boolean {
   return role === "mestre"
 }
 
+// O login mestre hardcoded e qualquer usuario com role mestre tem os mesmos privilegios.
+export function hasMasterAccess(user: Pick<AppUser, "role" | "isMaster"> | null | undefined): boolean {
+  if (!user) return false
+  return user.isMaster === true || user.role === "mestre"
+}
+
 export function canEditData(role: UserRole): boolean {
   return role !== "consulta" && role !== "administrativo_rh"
 }
@@ -70,4 +76,13 @@ export function canManageMultas(role: UserRole): boolean {
 
 export function canEditMultaRhStatus(role: UserRole): boolean {
   return role !== "consulta"
+}
+
+export function canManageFornecedores(role: UserRole): boolean {
+  return role !== "consulta" && role !== "administrativo_rh"
+}
+
+// A decisão sobre o orçamento é exclusiva do gestor.
+export function canApproveOrdemServico(role: UserRole): boolean {
+  return role === "mestre" || role === "administrativo"
 }

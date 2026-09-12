@@ -6,7 +6,7 @@ import Link from "next/link"
 import { ArrowRight, CalendarRange, Car, CircleDollarSign, Download, Fuel, Plus, Search, Sparkles, Users } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import type { AppUser, UserRole } from "@/lib/types"
-import { canAddColaboradores, canAddVehicles, canEditMultaRhStatus, canManageMultas } from "@/lib/auth-shared"
+import { canAddColaboradores, canAddVehicles, canApproveOrdemServico, canEditMultaRhStatus, canManageFornecedores, canManageMultas, hasMasterAccess } from "@/lib/auth-shared"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -46,6 +46,8 @@ import { useVehicles } from "@/hooks/use-vehicles"
 import { refreshColaboradores, useColaboradores } from "@/hooks/use-colaboradores"
 import { useDriverLinks } from "@/hooks/use-driver-links"
 import { useMultas } from "@/hooks/use-multas"
+import { useOrdensServico } from "@/hooks/use-ordens-servico"
+import { describeVencimento, getParcelasEmAlerta } from "@/lib/fornecedores"
 import { mapVehicleCardPlates } from "@/lib/driver-links-shared"
 import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
 import { isAgregadoVehicle, isVisibleInFrotaSection } from "@/lib/vehicle-classification"
@@ -65,6 +67,11 @@ const AjusteGeral = dynamic(
 
 const DocumentosPanel = dynamic(
   () => import("@/components/dashboard/documentos-panel").then((module) => module.DocumentosPanel),
+  { loading: () => <FuelSectionLoading /> }
+)
+
+const FornecedoresDashboard = dynamic(
+  () => import("@/components/fornecedores/fornecedores-dashboard").then((module) => module.FornecedoresDashboard),
   { loading: () => <FuelSectionLoading /> }
 )
 
@@ -186,6 +193,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     deleteColaborador,
   } = useColaboradores(shouldLoadColaboradores)
   const { multas } = useMultas(shouldLoadMultas)
+  const { ordens } = useOrdensServico(resolvedInitialSection !== "combustivel")
   const { links: driverLinks } = useDriverLinks(resolvedInitialSection === "veiculos-frota")
 
   const fuelRecords = fuelData?.records
@@ -208,7 +216,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
   }, [resolvedInitialSection, fuelRecords, vehicles, colaboradores, driverLinks])
 
   const userRole: UserRole = initialUser.role || "consulta"
-  const isMaster = initialUser.isMaster === true
+  const isMaster = hasMasterAccess(initialUser)
   const { label: sectionLabel, description: sectionDescription } = getSectionMeta(resolvedInitialSection)
 
   const notifications = useMemo<HeaderNotification[]>(() => {
@@ -244,8 +252,17 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       })
     }
 
+    for (const { ordem, parcela, dias } of getParcelasEmAlerta(ordens).slice(0, 5)) {
+      items.push({
+        id: `boleto-${ordem.id}-${parcela.id}`,
+        title: `Boleto ${parcela.numero}/${ordem.boletoParcelas.length} — ${ordem.placa} ${describeVencimento(dias)}`,
+        description: `${ordem.descricao} · ${formatCurrency(parcela.valor ?? 0)}`,
+        href: "/dashboard/fornecedores",
+      })
+    }
+
     return items
-  }, [vehicles, colaboradores, multas])
+  }, [vehicles, colaboradores, multas, ordens])
 
   const [filters, setFilters] = useState<VehicleFilters>(DEFAULT_VEHICLE_FILTERS)
   const [colaboradorFilters, setColaboradorFilters] = useState<ColaboradorFilters>(DEFAULT_COLABORADOR_FILTERS)
@@ -979,6 +996,18 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
             colaboradores={colaboradores}
             canManage={canManageMultas(userRole)}
             canEditRhStatus={canEditMultaRhStatus(userRole)}
+          />
+        </div>
+      )
+    }
+
+    if (resolvedInitialSection === "fornecedores") {
+      return (
+        <div className="w-full">
+          <FornecedoresDashboard
+            vehicles={vehicles}
+            canManage={canManageFornecedores(userRole)}
+            canApprove={canApproveOrdemServico(userRole)}
           />
         </div>
       )
