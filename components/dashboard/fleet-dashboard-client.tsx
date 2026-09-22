@@ -17,6 +17,7 @@ import { AppSidebar } from "@/components/dashboard/app-sidebar"
 import { SHOW_AGREGADOS_SECTION, getSectionMeta, type DashboardSection } from "@/components/dashboard/nav-config"
 import { StatsCards } from "@/components/fleet/stats-cards"
 import { OverviewInsights } from "@/components/dashboard/overview-insights"
+import { BoletosMesPanel } from "@/components/dashboard/boletos-mes-panel"
 import { Filters } from "@/components/fleet/filters"
 import { VehiclesTable } from "@/components/fleet/vehicles-table"
 import { VehicleModal } from "@/components/fleet/vehicle-modal"
@@ -794,9 +795,11 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
 
   const renderOverview = () => (
     <div className="w-full space-y-6">
-      <StatsCards vehicles={vehicles} multas={multas} />
+      <StatsCards vehicles={vehicles} multas={multas} ordens={ordens} />
 
       <OverviewInsights vehicles={vehicles} colaboradores={colaboradores} multas={multas} fuelData={fuelData} />
+
+      <BoletosMesPanel ordens={ordens} />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
         <Card className="overflow-hidden rounded-[1.6rem] border-[#d9e3ef] bg-[linear-gradient(180deg,#ffffff_0%,#fbfdff_100%)] shadow-[0_18px_40px_rgba(61,97,146,0.10)]">

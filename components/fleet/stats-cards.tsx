@@ -2,16 +2,17 @@
 
 import { useMemo } from "react"
 import useSWR from "swr"
-import { Car, Key, CreditCard, AlertTriangle, Wrench, Settings, Fuel, Send, BadgeCheck, Truck, Wallet } from "lucide-react"
+import { Car, Key, CreditCard, AlertTriangle, Wrench, Settings, Fuel, Send, BadgeCheck, Truck, Wallet, ClipboardList, CheckCircle2, Receipt } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { fuelFetcher, FUEL_DATA_SWR_KEY, type FuelResponse } from "@/hooks/use-fuel-data"
 import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
 import { isAgregadoVehicle } from "@/lib/vehicle-classification"
 import { getFuelFinancialPostingCycleBounds } from "@/lib/fuel-billing"
+import { isSameMonth } from "@/lib/fornecedores"
 import { getMultaTotalValue } from "@/lib/multas"
 import { cn } from "@/lib/utils"
-import type { Vehicle, Multa } from "@/lib/types"
+import type { Vehicle, Multa, OrdemServico } from "@/lib/types"
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -45,6 +46,7 @@ function toDateInputValue(date: Date): string {
 interface StatsCardsProps {
   vehicles: Vehicle[]
   multas: Multa[]
+  ordens?: OrdemServico[]
 }
 
 const AGREGADO_CYCLE_DAYS = 30
@@ -127,9 +129,24 @@ const statCardVariants: Record<string, { cardClass: string; iconClass: string; g
     iconClass: "border-[#added6] bg-[#dff5f0] text-[#0a6e64]",
     glowClass: "bg-[#98d9cf]/22",
   },
+  "Boletos a Pagar no Mês": {
+    cardClass: "border-[#f0d7c4] bg-[linear-gradient(180deg,#fff4e9_0%,#fde9da_100%)] shadow-[0_10px_24px_rgba(211,131,66,0.10)]",
+    iconClass: "border-[#f0c7a5] bg-[#ffe9d8] text-[#c65300]",
+    glowClass: "bg-[#f3bb88]/24",
+  },
+  "Orçamentos Pendentes": {
+    cardClass: "border-[#f0e2bf] bg-[linear-gradient(180deg,#fdf6e3_0%,#f8eed2_100%)] shadow-[0_10px_24px_rgba(184,134,11,0.10)]",
+    iconClass: "border-[#e8cf94] bg-[#fdf1d6] text-[#8a6100]",
+    glowClass: "bg-[#e9c97f]/22",
+  },
+  "Orçamentos Aprovados": {
+    cardClass: "border-[#cee2d4] bg-[linear-gradient(180deg,#eef8f1_0%,#e4f0e8_100%)] shadow-[0_10px_24px_rgba(87,147,111,0.10)]",
+    iconClass: "border-[#b6ddc3] bg-[#e3f3e8] text-[#226b3d]",
+    glowClass: "bg-[#9fd0af]/22",
+  },
 }
 
-export function StatsCards({ vehicles, multas }: StatsCardsProps) {
+export function StatsCards({ vehicles, multas, ordens = [] }: StatsCardsProps) {
   const { monthlyTotal: monthlyFuelTotal, reportDate, lastImportedAt } = useFuelDataContext()
   const billingCycle = useMemo(() => getFuelFinancialPostingCycleBounds(reportDate), [reportDate])
   const billingCycleKey = useMemo(() => {
@@ -188,6 +205,19 @@ export function StatsCards({ vehicles, multas }: StatsCardsProps) {
       const contrato = vehicle.agregadoContrato?.toUpperCase() ?? (vehicle.checklists?.length ? "ASSINADO" : "")
       return contrato.includes("ASSINADO")
     }).length
+
+    const hoje = new Date()
+    const parcelasDoMes = ordens.flatMap((ordem) =>
+      (ordem.boletoParcelas ?? []).filter((parcela) => parcela.vencimento && isSameMonth(parcela.vencimento, hoje))
+    )
+    const parcelasEmAberto = parcelasDoMes.filter((parcela) => !parcela.pago)
+    const boletosAPagarMes = parcelasEmAberto.reduce((sum, parcela) => sum + (parcela.valor ?? 0), 0)
+    const boletosPagosMes = parcelasDoMes.filter((parcela) => parcela.pago).length
+
+    const orcamentosPendentes = ordens.filter((ordem) => ordem.status === "aguardando")
+    const orcamentosAprovados = ordens.filter((ordem) => ordem.status === "aprovado" || ordem.status === "concluido")
+    const valorPendentes = orcamentosPendentes.reduce((sum, ordem) => sum + ordem.valorTotal, 0)
+    const valorAprovados = orcamentosAprovados.reduce((sum, ordem) => sum + ordem.valorTotal, 0)
 
     return {
       primary: [
@@ -265,9 +295,31 @@ export function StatsCards({ vehicles, multas }: StatsCardsProps) {
           icon: Wallet,
           color: "bg-teal-500/10 text-teal-600",
         },
+        {
+          label: "Boletos a Pagar no Mês",
+          value: formatCurrency(boletosAPagarMes),
+          helperText: `${parcelasEmAberto.length} ${parcelasEmAberto.length === 1 ? "boleto em aberto" : "boletos em aberto"}`,
+          secondaryHelperText: `${boletosPagosMes} ${boletosPagosMes === 1 ? "boleto pago" : "boletos pagos"} no mês`,
+          icon: Receipt,
+          color: "bg-orange-500/10 text-orange-600",
+        },
+        {
+          label: "Orçamentos Pendentes",
+          value: orcamentosPendentes.length.toString(),
+          helperText: `${formatCurrency(valorPendentes)} aguardando aprovação`,
+          icon: ClipboardList,
+          color: "bg-amber-500/10 text-amber-600",
+        },
+        {
+          label: "Orçamentos Aprovados",
+          value: orcamentosAprovados.length.toString(),
+          helperText: `${formatCurrency(valorAprovados)} liberados para execução`,
+          icon: CheckCircle2,
+          color: "bg-emerald-500/10 text-emerald-600",
+        },
       ],
     }
-  }, [billingCycle.end, billingCycle.start, billingCycleFuelTotal, lastImportedLabel, multas, vehicles])
+  }, [billingCycle.end, billingCycle.start, billingCycleFuelTotal, lastImportedLabel, multas, ordens, vehicles])
 
   const renderStatCard = (stat: (typeof stats.primary)[number] | (typeof stats.secondary)[number]) => {
     const variant = statCardVariants[stat.label] ?? statCardVariants.Colaboradores

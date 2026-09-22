@@ -10,6 +10,7 @@ import {
   CircleDollarSign,
   ClipboardList,
   Clock,
+  Eye,
   FileText,
   Mail,
   MapPin,
@@ -59,6 +60,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/hooks/use-toast"
 import { FornecedorModal } from "@/components/fornecedores/fornecedor-modal"
 import { OrdemAnexosModal } from "@/components/fornecedores/ordem-anexos-modal"
+import { OrdemDetalhesModal } from "@/components/fornecedores/ordem-detalhes-modal"
 import { OrdemServicoModal } from "@/components/fornecedores/ordem-servico-modal"
 import { useFornecedores } from "@/hooks/use-fornecedores"
 import { useOrdensServico } from "@/hooks/use-ordens-servico"
@@ -141,6 +143,7 @@ export function FornecedoresDashboard({ vehicles, canManage, canApprove }: Forne
   const [editingOrdem, setEditingOrdem] = useState<OrdemServico | null>(null)
   const [deletingOrdem, setDeletingOrdem] = useState<OrdemServico | null>(null)
   const [anexosOrdem, setAnexosOrdem] = useState<OrdemServico | null>(null)
+  const [detalhesOrdem, setDetalhesOrdem] = useState<OrdemServico | null>(null)
   const [rejectingOrdem, setRejectingOrdem] = useState<OrdemServico | null>(null)
   const [rejectionReason, setRejectionReason] = useState("")
   const [decidingId, setDecidingId] = useState<string | null>(null)
@@ -596,6 +599,17 @@ export function FornecedoresDashboard({ vehicles, canManage, canApprove }: Forne
                                     </>
                                   ) : null}
 
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8"
+                                    aria-label="Ver detalhes da ordem"
+                                    title="Ver detalhes"
+                                    onClick={() => setDetalhesOrdem(ordem)}
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                  </Button>
+
                                   {canManage ? (
                                     <>
                                       <Button
@@ -745,6 +759,16 @@ export function FornecedoresDashboard({ vehicles, canManage, canApprove }: Forne
                             Gerenciar boletos
                           </Button>
                         ) : null}
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={cn("h-8 w-full gap-1.5", canManage ? "mt-2" : "mt-3")}
+                          onClick={() => setDetalhesOrdem(ordem)}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Ver detalhes
+                        </Button>
                       </div>
                     )
                   })
@@ -943,6 +967,19 @@ export function FornecedoresDashboard({ vehicles, canManage, canApprove }: Forne
         }}
         ordem={anexosOrdem}
         onSave={handleSaveAnexos}
+      />
+
+      <OrdemDetalhesModal
+        open={detalhesOrdem !== null}
+        onOpenChange={(value) => {
+          if (!value) setDetalhesOrdem(null)
+        }}
+        ordem={detalhesOrdem}
+        fornecedorNome={
+          detalhesOrdem?.fornecedorId
+            ? fornecedoresById.get(detalhesOrdem.fornecedorId)?.razaoSocial
+            : undefined
+        }
       />
 
       <Dialog

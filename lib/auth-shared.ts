@@ -82,7 +82,7 @@ export function canManageFornecedores(role: UserRole): boolean {
   return role !== "consulta" && role !== "administrativo_rh"
 }
 
-// A decisão sobre o orçamento é exclusiva do gestor.
+// A decisão sobre o orçamento é exclusiva do cargo mestre.
 export function canApproveOrdemServico(role: UserRole): boolean {
-  return role === "mestre" || role === "administrativo"
+  return role === "mestre"
 }

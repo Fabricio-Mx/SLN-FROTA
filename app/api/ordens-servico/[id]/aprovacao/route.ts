@@ -22,7 +22,7 @@ type OrdemStatusRow = {
 export async function PATCH(request: Request, context: RouteContext) {
   const session = await verifySession()
   if (!session || !canApproveOrdemServico(session.role)) {
-    return NextResponse.json({ error: "Apenas o gestor pode aprovar ou rejeitar orçamentos." }, { status: 403 })
+    return NextResponse.json({ error: "Apenas o cargo mestre pode aprovar ou rejeitar orçamentos." }, { status: 403 })
   }
 
   const { id } = await context.params
