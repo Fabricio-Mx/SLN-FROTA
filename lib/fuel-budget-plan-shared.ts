@@ -477,7 +477,8 @@ function createMutableCenter(
 
 /**
  * Cruza os abastecimentos do mes com o plano de orcamento.
- * Prioridade: nome no plano > placa/nome parcial no plano (desde que no mesmo centro do cadastro) > cadastro de centro de custo.
+ * O centro de cada abastecimento vem do cadastro de centro de custo (mesma regra do relatorio consolidado);
+ * o plano so identifica o colaborador (nome > placa > nome parcial) dentro desse mesmo centro.
  */
 export function buildFuelBudgetAnalysis(params: {
   plan: FuelBudgetPlan
@@ -539,6 +540,15 @@ export function buildFuelBudgetAnalysis(params: {
   )
   const resolvedByDriver = new Map<string, { centerCode: string; centerLabel: string; collaboratorId: string | null }>()
 
+  // Rotulos do cadastro que so sao alias de um centro do plano (ex.: "FRANCA / SP") ficam separados, como no relatorio.
+  const resolveRegistryCenterCode = (registryLabel: string): string => {
+    const nameKey = getCostCenterNameKey(registryLabel)
+    const planCode = resolveBudgetCenterId(registryLabel, plan.centers)
+    const planCenter = planCode ? centers.get(planCode) : undefined
+    if (planCenter?.inPlan && getCostCenterNameKey(planCenter.centerLabel) === nameKey) return planCode
+    return nameKey ? `${NAME_CENTER_PREFIX}${nameKey}` : planCode
+  }
+
   const monthRecords = records
     .map((record) => ({ record, date: parseFuelDateTime(record.dateTime) }))
     .filter((item) => !Number.isNaN(item.date.getTime()) && toBudgetMonthKey(item.date) === monthKey)
@@ -558,17 +568,17 @@ export function buildFuelBudgetAnalysis(params: {
   for (const { record, date } of monthRecords) {
     const driverName = normalizeDriverDisplayName(record.nomeMotorista, record.cpfMotorista)
     const plate = normalizeBudgetPlate(record.cardPlate)
-    const cacheKey = `${driverName.toLowerCase()}|${plate}`
+    const cacheKey = `${record.nomeMotorista}|${driverName.toLowerCase()}|${plate}`
     let resolved = resolvedByDriver.get(cacheKey)
 
     if (!resolved) {
-      const planMatch = resolveCostCenterRecord(driverName, planLookup)
-      const byName = planMatch ? collaboratorByLookupKey.get(planMatch.centroCusto) : undefined
-      const registry = byName ? null : resolveCostCenterRecord(driverName, costCenterLookup)
+      const registry = resolveCostCenterRecord(record.nomeMotorista, costCenterLookup)
       const registryLabel = registry?.centroCusto ? normalizeCostCenterLabel(registry.centroCusto) : ""
-      const registryCenterCode = registryLabel ? resolveBudgetCenterId(registryLabel, plan.centers) : ""
-      // Placa e nome parcial so valem se nao contrariam o cadastro: o cartao pode estar com outra pessoa.
-      const isConsistent = (match: { centerCode: string }) => !registryCenterCode || match.centerCode === registryCenterCode
+      const registryCenterCode = registryLabel ? resolveRegistryCenterCode(registryLabel) : ""
+      const isConsistent = (match: { centerCode: string }) => Boolean(registryCenterCode) && match.centerCode === registryCenterCode
+      const planMatch = registryCenterCode ? resolveCostCenterRecord(driverName, planLookup) : null
+      const nameCandidate = planMatch ? collaboratorByLookupKey.get(planMatch.centroCusto) : undefined
+      const byName = nameCandidate && isConsistent(nameCandidate) ? nameCandidate : undefined
       const plateCandidate = !byName && plate ? collaboratorByPlate.get(plate) : undefined
       const byPlate = plateCandidate && isConsistent(plateCandidate) ? plateCandidate : undefined
       const byPartialName = !byName && !byPlate ? findCollaboratorByNameTokens(driverName, collaboratorTokens, isConsistent) : undefined
