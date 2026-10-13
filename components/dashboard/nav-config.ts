@@ -28,6 +28,7 @@ export type DashboardSection =
   | "fornecedores"
   | "ajuste-geral"
   | "documentos"
+  | "configuracoes"
 
 export type DashboardSectionItem = {
   id: DashboardSection
@@ -112,6 +113,15 @@ export const DOCUMENTOS_SECTION: DashboardSectionItem = {
   icon: FileText,
 }
 
+// Fica no grupo "Configuracoes" da sidebar.
+export const CONFIGURACOES_SECTION: DashboardSectionItem = {
+  id: "configuracoes",
+  href: "/dashboard/configuracoes",
+  label: "Configurações",
+  description: "Preferências do sistema, como o modo de tela.",
+  icon: Settings,
+}
+
 export const DASHBOARD_SECTION_BUTTON_STYLES: Record<DashboardSection, { active: string; inactive: string }> = {
   overview: {
     active: "border-[#7CB342] bg-[#7CB342] text-white hover:bg-[#6d9d39] hover:border-[#6d9d39]",
@@ -149,6 +159,10 @@ export const DASHBOARD_SECTION_BUTTON_STYLES: Record<DashboardSection, { active:
     active: "border-[#d97706] bg-[#d97706] text-white hover:bg-[#b96405] hover:border-[#b96405]",
     inactive: "border-transparent bg-transparent text-[#92620a] hover:bg-[#fff7ed] hover:border-[#fbdcb4]",
   },
+  configuracoes: {
+    active: "border-[#475569] bg-[#475569] text-white hover:bg-[#334155] hover:border-[#334155]",
+    inactive: "border-transparent bg-transparent text-[#334155] hover:bg-[#f1f5f9] hover:border-[#e2e8f0]",
+  },
 }
 
 const DEFAULT_SIDEBAR_NAV_COLORS = {
@@ -171,7 +185,7 @@ export const SIDEBAR_NAV_PALETTE_DARK: SectionNavPalette = Object.fromEntries(
 )
 
 export function getSectionMeta(section: DashboardSection): Pick<DashboardSectionItem, "label" | "description"> {
-  const matchedSection = [...DASHBOARD_SECTIONS, DOCUMENTOS_SECTION].find((item) => item.id === section)
+  const matchedSection = [...DASHBOARD_SECTIONS, DOCUMENTOS_SECTION, CONFIGURACOES_SECTION].find((item) => item.id === section)
 
   return {
     label: matchedSection?.label || "Painel Geral",
@@ -187,7 +201,12 @@ export function buildSidebarNavGroups(isMaster: boolean): SectionNavGroup[] {
     configItems.push({ id: "usuarios", label: "Usuários", icon: UserCog, href: "/admin/usuarios" })
   }
   configItems.push({ id: "permissoes", label: "Permissões", icon: Lock })
-  configItems.push({ id: "configuracoes", label: "Configurações", icon: Settings })
+  configItems.push({
+    id: CONFIGURACOES_SECTION.id,
+    label: CONFIGURACOES_SECTION.label,
+    icon: Settings,
+    href: CONFIGURACOES_SECTION.href,
+  })
 
   return [
     { items: mainItems },

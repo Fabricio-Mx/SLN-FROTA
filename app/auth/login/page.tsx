@@ -56,7 +56,7 @@ export default function LoginPage() {
 
         {/* Conteudo central */}
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-10 py-8 xl:px-16 xl:py-10">
-          <div className="mb-7 rounded-[1.75rem] bg-white p-7 shadow-2xl xl:mb-10 xl:rounded-3xl xl:p-10">
+          <div data-theme-preserve className="mb-7 rounded-[1.75rem] bg-white p-7 shadow-2xl xl:mb-10 xl:rounded-3xl xl:p-10">
             <Image
               src="/images/sln-logo.png"
               alt="SLN Construções e Engenharia"
@@ -118,7 +118,7 @@ export default function LoginPage() {
           <div className="w-full max-w-[21.5rem] sm:max-w-[23rem]">
             {/* Logo mobile */}
             <div className="mb-6 flex justify-center lg:hidden sm:mb-8">
-              <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-lg sm:p-5">
+              <div data-theme-preserve className="rounded-2xl border border-gray-100 bg-white p-4 shadow-lg sm:p-5">
                 <Image
                   src="/images/sln-logo.png"
                   alt="SLN"

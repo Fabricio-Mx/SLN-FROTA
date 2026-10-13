@@ -71,6 +71,11 @@ const DocumentosPanel = dynamic(
   { loading: () => <FuelSectionLoading /> }
 )
 
+const ConfiguracoesPanel = dynamic(
+  () => import("@/components/dashboard/configuracoes-panel").then((module) => module.ConfiguracoesPanel),
+  { loading: () => <FuelSectionLoading /> }
+)
+
 const FornecedoresDashboard = dynamic(
   () => import("@/components/fornecedores/fornecedores-dashboard").then((module) => module.FornecedoresDashboard),
   { loading: () => <FuelSectionLoading /> }
@@ -182,8 +187,9 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     ? "veiculos-frota"
     : initialSection
   const fuelData = useOptionalFuelDataContext()
-  const shouldLoadVehicles = resolvedInitialSection !== "combustivel"
-  const shouldLoadColaboradores = resolvedInitialSection !== "combustivel"
+  const isLightweightSection = resolvedInitialSection === "combustivel" || resolvedInitialSection === "configuracoes"
+  const shouldLoadVehicles = !isLightweightSection
+  const shouldLoadColaboradores = !isLightweightSection
   const shouldLoadMultas = resolvedInitialSection === "overview"
   const monthlyFuelTotal = fuelData?.monthlyTotal ?? 0
   const { vehicles, addVehicle, updateVehicle, deleteVehicle, refreshVehicles } = useVehicles(shouldLoadVehicles)
@@ -194,7 +200,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     deleteColaborador,
   } = useColaboradores(shouldLoadColaboradores)
   const { multas } = useMultas(shouldLoadMultas)
-  const { ordens } = useOrdensServico(resolvedInitialSection !== "combustivel")
+  const { ordens } = useOrdensServico(!isLightweightSection)
   const { links: driverLinks } = useDriverLinks(resolvedInitialSection === "veiculos-frota")
 
   const fuelRecords = fuelData?.records
@@ -1028,6 +1034,14 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       return (
         <div className="w-full">
           <DocumentosPanel canManage={canAddColaboradores(userRole)} />
+        </div>
+      )
+    }
+
+    if (resolvedInitialSection === "configuracoes") {
+      return (
+        <div className="w-full">
+          <ConfiguracoesPanel />
         </div>
       )
     }

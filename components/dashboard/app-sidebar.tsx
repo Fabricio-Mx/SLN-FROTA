@@ -25,6 +25,7 @@ export function AppSidebar({ activeSection, isMaster, className }: AppSidebarPro
       onMouseLeave={() => setIsExpanded(false)}
     >
       <aside
+        data-theme-preserve
         className={cn(
           "absolute inset-y-0 left-0 flex h-screen flex-col border-r border-black/20 bg-[linear-gradient(180deg,#1b4029_0%,#12301d_100%)] transition-[width] duration-200 ease-out",
           isExpanded ? "w-[248px] shadow-[0_18px_45px_rgba(0,0,0,0.35)] xl:w-[268px]" : "w-[72px]"

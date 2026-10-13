@@ -152,3 +152,34 @@
 .table-scroll-hidden [data-slot="table-container"]::-webkit-scrollbar {
   display: none;
 }
+
+/*
+ * Temas de tela (Configuracoes > Aparencia). A classe vem do next-themes no <html>.
+ * O sistema usa muitas cores fixas nas classes, por isso os temas atuam no documento inteiro via filtro,
+ * e [data-theme-preserve] marca areas que devem manter as cores originais (sidebar, pre-visualizacoes).
+ * Os filtros precisam bater com APP_THEME_PREVIEW_FILTER em lib/app-themes.ts.
+ */
+
+/* Tema 2: azul noturno (matriz de cor SVG definida em app/layout.tsx; ver lib/app-themes.ts) */
+html.theme-navy {
+  background-color: #ffffff;
+  filter: url(#sln-theme-navy);
+}
+
+html.theme-navy :is(img, video, canvas, iframe, [data-theme-preserve]) {
+  filter: url(#sln-theme-navy-inv);
+}
+
+/* Tema 3: modo escuro (inverte a luminosidade mantendo o tom das cores) */
+html.theme-dark {
+  background-color: #f2f4f7;
+  filter: invert(0.92) hue-rotate(180deg);
+}
+
+html.theme-dark :is(img, video, canvas, iframe, [data-theme-preserve]) {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+html:is(.theme-dark, .theme-navy) [data-theme-preserve] :is(img, video, canvas, iframe, [data-theme-preserve]) {
+  filter: none;
+}
