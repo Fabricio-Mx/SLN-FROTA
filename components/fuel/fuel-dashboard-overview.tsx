@@ -6,6 +6,7 @@ import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie
 import { AlertTriangle, Building2, CalendarDays, CalendarRange, Droplets, Fuel, Receipt, TrendingUp, Users } from "lucide-react"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { FuelCostCenterInsights } from "@/components/fuel/fuel-cost-center-insights"
+import { FuelBudgetOverviewPanel } from "@/components/fuel/fuel-budget-overview-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -396,9 +397,10 @@ function formatRankingPersonLabel(value: string): string {
 
 type FuelDashboardOverviewProps = {
   isMaster?: boolean
+  onManageBudget?: () => void
 }
 
-export function FuelDashboardOverview({ isMaster = false }: FuelDashboardOverviewProps = {}) {
+export function FuelDashboardOverview({ isMaster = false, onManageBudget }: FuelDashboardOverviewProps = {}) {
   const {
     records,
     monthlyReferenceDate,
@@ -413,6 +415,14 @@ export function FuelDashboardOverview({ isMaster = false }: FuelDashboardOvervie
   } = useFuelDataContext()
   const { toast } = useToast()
   const { lookup: costCenterLookup } = useFuelCostCenters()
+  const registryLabelByCode = useMemo(() => {
+    const labels = new Map<string, string>()
+    for (const record of costCenterLookup.records) {
+      const code = extractCostCenterCode(record.centroCusto)
+      if (code && !labels.has(code)) labels.set(code, record.centroCusto)
+    }
+    return labels
+  }, [costCenterLookup])
   const { items: dailyBudgetItems, isLoading: isDailyBudgetLoading, mutate: mutateDailyBudgets } = useFuelDailyBudgets()
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({})
   const [isBudgetEditMode, setIsBudgetEditMode] = useState(false)
@@ -956,7 +966,8 @@ export function FuelDashboardOverview({ isMaster = false }: FuelDashboardOvervie
 
     for (const [centerCode, budget] of budgetsByCode.entries()) {
       const spent = selectedDayTelecomSpentByCode.get(centerCode)?.total ?? 0
-      const centerLabel = selectedDayTelecomSpentByCode.get(centerCode)?.centerLabel || budget.centerLabel || centerCode
+      const centerLabel =
+        selectedDayTelecomSpentByCode.get(centerCode)?.centerLabel || registryLabelByCode.get(centerCode) || budget.centerLabel || centerCode
       rows.push({
         centerCode,
         centerLabel,
@@ -977,7 +988,7 @@ export function FuelDashboardOverview({ isMaster = false }: FuelDashboardOvervie
     }
 
     return rows.sort((left, right) => Number(left.centerCode) - Number(right.centerCode))
-  }, [dailyBudgetItems, selectedDayTelecomSpentByCode])
+  }, [dailyBudgetItems, registryLabelByCode, selectedDayTelecomSpentByCode])
 
   const telecomBudgetTotals = useMemo(() => {
     return telecomDailyBudgetRows.reduce(
@@ -1225,7 +1236,8 @@ export function FuelDashboardOverview({ isMaster = false }: FuelDashboardOvervie
 
     for (const [centerCode, budget] of budgetsByCode.entries()) {
       const spent = selectedWeekTelecomSpentByCode.get(centerCode)?.total ?? 0
-      const centerLabel = selectedWeekTelecomSpentByCode.get(centerCode)?.centerLabel || budget.centerLabel || centerCode
+      const centerLabel =
+        selectedWeekTelecomSpentByCode.get(centerCode)?.centerLabel || registryLabelByCode.get(centerCode) || budget.centerLabel || centerCode
       rows.push({
         centerCode,
         centerLabel,
@@ -1246,7 +1258,7 @@ export function FuelDashboardOverview({ isMaster = false }: FuelDashboardOvervie
     }
 
     return rows.sort((left, right) => Number(left.centerCode) - Number(right.centerCode))
-  }, [dailyBudgetItems, daysInSelectedWeek, selectedWeekTelecomSpentByCode])
+  }, [dailyBudgetItems, daysInSelectedWeek, registryLabelByCode, selectedWeekTelecomSpentByCode])
 
   const telecomWeeklyBudgetTotals = useMemo(() => {
     return telecomWeeklyBudgetRows.reduce(
@@ -1714,6 +1726,8 @@ export function FuelDashboardOverview({ isMaster = false }: FuelDashboardOvervie
           </CardContent>
         </Card>
       </div>
+
+      <FuelBudgetOverviewPanel onManageBudget={onManageBudget} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_320px]">
         <Card className="overflow-hidden border-[#d8dfd1] bg-[linear-gradient(180deg,#fbfcfa_0%,#f4f7f1_100%)] shadow-sm">

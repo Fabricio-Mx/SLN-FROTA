@@ -1,4 +1,5 @@
 import { normalizeCostCenterLabel } from "@/lib/cost-center-shared"
+import { resolveKnownCostCenterCode } from "@/lib/fuel-telecom-centers"
 
 export type FuelDailyBudgetItem = {
   centerCode: string
@@ -95,9 +96,7 @@ function mergeDefaultAndCustomBudgetItems(customItems: FuelDailyBudgetItem[]): F
 }
 
 export function extractCostCenterCode(centerLabel: string): string {
-  const normalized = normalizeCostCenterLabel(centerLabel)
-  const match = normalized.match(/^(\d+)\s*-/)
-  return match?.[1] ?? ""
+  return resolveKnownCostCenterCode(centerLabel)
 }
 
 export function normalizeFuelDailyBudgetDataset(input: unknown): FuelDailyBudgetDataset {

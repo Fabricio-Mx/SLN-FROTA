@@ -2,11 +2,11 @@
 
 import { useState } from "react"
 import dynamic from "next/dynamic"
-import { ArrowUpFromLine, ChartNoAxesCombined, Receipt, Sheet, Table2 } from "lucide-react"
+import { ArrowUpFromLine, ChartNoAxesCombined, Sheet, Table2, Target } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
-type FuelWorkspaceTab = "painel" | "importacoes" | "transacoes" | "consolidado" | "financeiro"
+type FuelWorkspaceTab = "painel" | "importacoes" | "transacoes" | "consolidado" | "orcamento"
 
 type FuelWorkspaceProps = {
   isMaster?: boolean
@@ -32,8 +32,8 @@ const FuelConsolidatedReport = dynamic(
   { loading: () => <FuelWorkspaceLoading /> },
 )
 
-const FuelFinancialPanel = dynamic(
-  () => import("@/components/fuel/fuel-financial-panel").then((module) => module.FuelFinancialPanel),
+const FuelBudgetPanel = dynamic(
+  () => import("@/components/fuel/fuel-budget-panel").then((module) => module.FuelBudgetPanel),
   { loading: () => <FuelWorkspaceLoading /> },
 )
 
@@ -68,10 +68,10 @@ const TAB_ITEMS: Array<{
     icon: Sheet,
   },
   {
-    id: "financeiro",
-    label: "Financeiro",
-    description: "Faturas VELOE e exportação por ciclo.",
-    icon: Receipt,
+    id: "orcamento",
+    label: "Orçamento",
+    description: "Orçado x Gasto por centro de custo.",
+    icon: Target,
   },
 ]
 
@@ -110,11 +110,11 @@ export function FuelWorkspace({ isMaster = false }: FuelWorkspaceProps) {
         </div>
       </Tabs>
 
-      {activeTab === "painel" ? <FuelDashboardOverview isMaster={isMaster} /> : null}
+      {activeTab === "painel" ? <FuelDashboardOverview isMaster={isMaster} onManageBudget={() => setActiveTab("orcamento")} /> : null}
       {activeTab === "importacoes" ? <FuelImportPanel isMaster={isMaster} /> : null}
       {activeTab === "transacoes" ? <FuelTransactionsTable /> : null}
       {activeTab === "consolidado" ? <FuelConsolidatedReport /> : null}
-      {activeTab === "financeiro" ? <FuelFinancialPanel isMaster={isMaster} /> : null}
+      {activeTab === "orcamento" ? <FuelBudgetPanel isMaster={isMaster} /> : null}
     </div>
   )
 }
