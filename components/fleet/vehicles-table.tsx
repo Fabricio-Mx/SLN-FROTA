@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { CreditCard, Download, Edit, Eye, MoreHorizontal, Trash2, UserPlus, UserMinus } from "lucide-react"
+import { Building2, CreditCard, Download, Edit, Eye, FileSearch, MoreHorizontal, Trash2, UserPlus, UserMinus } from "lucide-react"
+import { VehicleDetailsDialog } from "@/components/fleet/vehicle-details-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -38,6 +39,9 @@ interface VehiclesTableProps {
 function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleDateString("pt-BR")
 }
+
+const HEAD_CLASS = "h-11 text-[0.72rem] font-bold uppercase tracking-[0.06em] text-slate-600"
+const STATUS_BADGE_CLASS = "border px-2 py-0.5 text-[0.72rem] font-semibold shadow-none"
 
 function isContractExpiring(dateString: string): boolean {
   if (!dateString) return false
@@ -137,6 +141,11 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
   const stickyScrollbarRef = useRef<HTMLDivElement | null>(null)
   const [stickyScrollWidth, setStickyScrollWidth] = useState(0)
   const [showStickyScrollbar, setShowStickyScrollbar] = useState(false)
+  const [detailsVehicleId, setDetailsVehicleId] = useState<string | null>(null)
+  const detailsVehicle = detailsVehicleId ? vehicles.find((item) => item.id === detailsVehicleId) ?? null : null
+  const detailsCardPlate = detailsVehicle
+    ? detailsVehicle.placaCartaoCombustivel || cardPlatesByVehicleId?.get(detailsVehicle.id)?.cardPlate || ""
+    : ""
 
   const getColaborador = (colaboradorId: string | null | undefined) => {
     if (!colaboradorId) return null
@@ -218,20 +227,20 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
       <div className="table-scroll-hidden overflow-hidden rounded-lg border border-border bg-card">
         <Table className="min-w-[1380px]">
         <TableHeader>
-          <TableRow className="bg-muted/50">
-            <TableHead className="text-[0.88rem] font-semibold text-left">Veículo</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-left">Modelo</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-center">KM</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-center">Próx. Revisão</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-center">Mensalidade</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-center">Vencimento</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-center">Status</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-center">Sem Parar</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-left">Origem</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-left">Cartão</TableHead>
-            <TableHead className="text-[0.88rem] font-semibold text-left">Colaborador</TableHead>
+          <TableRow className="border-b-2 border-[#dfe7d8] bg-[#f3f6f1] hover:bg-[#f3f6f1]">
+            <TableHead className={`${HEAD_CLASS} text-left`}>Veículo</TableHead>
+            <TableHead className={`${HEAD_CLASS} text-left`}>Modelo</TableHead>
+            <TableHead className={`${HEAD_CLASS} text-center`}>KM</TableHead>
+            <TableHead className={`${HEAD_CLASS} text-center`}>Próx. Revisão</TableHead>
+            <TableHead className={`${HEAD_CLASS} text-center`}>Mensalidade</TableHead>
+            <TableHead className={`${HEAD_CLASS} text-center`}>Vencimento</TableHead>
+            <TableHead className={`${HEAD_CLASS} text-center`}>Status</TableHead>
+            <TableHead className={`${HEAD_CLASS} text-center`}>Sem Parar</TableHead>
+            <TableHead className={`${HEAD_CLASS} text-left`}>Origem</TableHead>
+            <TableHead className={`${HEAD_CLASS} text-left`}>Cartão</TableHead>
+            <TableHead className={`${HEAD_CLASS} min-w-[300px] text-left`}>Colaborador</TableHead>
             {canManage ? (
-              <TableHead className="sticky right-0 z-10 w-[70px] bg-muted/50 text-center shadow-[-1px_0_0_hsl(var(--border))]"></TableHead>
+              <TableHead className="sticky right-0 z-10 w-[70px] bg-[#f3f6f1] text-center shadow-[-1px_0_0_hsl(var(--border))]"></TableHead>
             ) : null}
           </TableRow>
         </TableHeader>
@@ -269,15 +278,17 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
                       <VehicleIcon className="h-4 w-4" />
                     </span>
                     <div className="space-y-1">
-                      <div className="font-mono text-[0.95rem] font-semibold text-foreground">{vehicle.placa}</div>
-                      <div className="text-[0.78rem] text-muted-foreground">Renavan: {vehicle.renavan || "-"}</div>
+                      <div className="inline-flex rounded-md border border-slate-300 bg-white px-1.5 py-px text-[0.9rem] font-extrabold uppercase tracking-[0.08em] text-slate-900 shadow-[inset_0_-1px_0_rgba(15,23,42,0.08)]">
+                        {vehicle.placa}
+                      </div>
+                      <div className="text-[0.74rem] text-muted-foreground">Renavam {vehicle.renavan || "-"}</div>
                     </div>
                   </div>
                 </TableCell>
-                <TableCell className="align-middle text-left text-[0.92rem]">
+                <TableCell className="align-middle text-left text-[0.88rem] font-medium text-slate-700">
                   {vehicle.modelo}
                 </TableCell>
-                <TableCell className="align-middle text-center text-[0.9rem] text-muted-foreground">
+                <TableCell className="align-middle text-center text-[0.88rem] font-medium tabular-nums text-slate-700">
                   {(vehicle.km ?? 0).toLocaleString("pt-BR")} km
                 </TableCell>
                 <TableCell className="align-middle text-center">
@@ -332,29 +343,29 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
                   )}
                 </TableCell>
                 <TableCell className="align-middle text-center">
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap justify-center gap-1">
                     {vehicle.frota && (
-                      <Badge className="bg-chart-4/10 text-chart-4 hover:bg-chart-4/20 text-[0.76rem]">
+                      <Badge variant="outline" className={`${STATUS_BADGE_CLASS} border-sky-200 bg-sky-50 text-sky-700`}>
                         Frota
                       </Badge>
                     )}
                     {vehicle.naOficina && (
-                      <Badge className="bg-chart-3/10 text-chart-3 hover:bg-chart-3/20 text-[0.76rem]">
+                      <Badge variant="outline" className={`${STATUS_BADGE_CLASS} border-orange-200 bg-orange-50 text-orange-700`}>
                         Oficina
                       </Badge>
                     )}
                     {dueForReview && (
-                      <Badge className="bg-chart-5/10 text-chart-5 hover:bg-chart-5/20 text-[0.76rem]">
+                      <Badge variant="outline" className={`${STATUS_BADGE_CLASS} border-rose-200 bg-rose-50 text-rose-700`}>
                         Revisão
                       </Badge>
                     )}
                     {!vehicle.frota && !vehicle.naOficina && !dueForReview && (
                       vehicle.colaboradorId ? (
-                        <Badge className="bg-primary/10 text-primary hover:bg-primary/20 text-[0.76rem]">
+                        <Badge variant="outline" className={`${STATUS_BADGE_CLASS} border-indigo-200 bg-indigo-50 text-indigo-700`}>
                           Em uso
                         </Badge>
                       ) : (
-                        <Badge className="bg-accent/10 text-accent hover:bg-accent/20 text-[0.76rem]">
+                        <Badge variant="outline" className={`${STATUS_BADGE_CLASS} border-emerald-200 bg-emerald-50 text-emerald-700`}>
                           Disponível
                         </Badge>
                       )
@@ -363,26 +374,26 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
                 </TableCell>
                 <TableCell className="align-middle text-center">
                   {vehicle.semParar ? (
-                    <Badge className="bg-green-100/80 text-green-800 hover:bg-green-100 text-[0.76rem] font-medium">
+                    <Badge variant="outline" className={`${STATUS_BADGE_CLASS} border-emerald-200 bg-emerald-50 text-emerald-700`}>
                       Ativo
                     </Badge>
                   ) : (
-                    <span className="text-[0.9rem] font-medium text-muted-foreground">Não</span>
+                    <span className="text-[0.82rem] font-medium text-slate-400">Não</span>
                   )}
                 </TableCell>
                 <TableCell className="align-middle text-left">
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     <Badge
-                      variant={vehicle.tipoPropriedade === "proprio" ? "default" : "secondary"}
+                      variant="outline"
                       className={
                         vehicle.tipoPropriedade === "proprio"
-                          ? "bg-accent/10 text-accent hover:bg-accent/20"
-                          : ""
+                          ? `${STATUS_BADGE_CLASS} border-emerald-200 bg-emerald-50 text-emerald-700`
+                          : `${STATUS_BADGE_CLASS} border-sky-200 bg-sky-50 text-sky-700`
                       }
                     >
                       {vehicle.tipoPropriedade === "proprio" ? "Próprio" : "Alugado"}
                     </Badge>
-                    <div className="text-[0.78rem] text-muted-foreground">
+                    <div className="text-[0.74rem] text-muted-foreground">
                       {vehicle.tipoPropriedade === "alugado"
                         ? getEmpresaLocacaoNome(vehicle.empresaLocacao)
                         : getFornecedorProprioNome(vehicle.fornecedorProprio)}
@@ -390,14 +401,14 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
                   </div>
                 </TableCell>
                 <TableCell className="align-middle text-left">
-                  <div className="space-y-2">
-                    <Badge variant="outline" className={`gap-1.5 font-medium ${getCartaoBadgeClass(vehicle.cartaoCombustivel)}`}>
+                  <div className="space-y-1">
+                    <Badge variant="outline" className={`gap-1.5 ${STATUS_BADGE_CLASS} ${getCartaoBadgeClass(vehicle.cartaoCombustivel)}`}>
                       <CreditCard className="h-3.5 w-3.5" />
                       {getCartaoLabel(vehicle.cartaoCombustivel)}
                     </Badge>
                     {cardPlate ? (
                       <div
-                        className="font-mono text-[0.82rem] font-semibold text-foreground"
+                        className="text-[0.82rem] font-extrabold uppercase tracking-[0.06em] text-foreground"
                         title={
                           vehicle.placaCartaoCombustivel
                             ? "Placa cadastrada no veículo"
@@ -412,46 +423,72 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
                   </div>
                 </TableCell>
                 <TableCell className="align-middle text-left">
-                  {colaboradorNome ? (
-                    <div className="flex items-center gap-1">
-                      <Badge className="bg-primary/10 text-primary hover:bg-primary/20">
-                        {colaboradorNome}
-                      </Badge>
-                      {termoDoc ? (
+                  <div className="flex items-center gap-2.5">
+                    <div className="min-w-0 flex-1">
+                      {colaboradorNome ? (
                         <>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-slate-500 hover:text-violet-700" asChild>
-                            <a
-                              href={`/api/drive/file/${termoDoc.id}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={`Visualizar termo de responsabilidade (${termoDoc.name})`}
-                            >
-                              <Eye className="h-4 w-4" />
-                              <span className="sr-only">Visualizar termo</span>
-                            </a>
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-slate-500 hover:text-violet-700" asChild>
-                            <a
-                              href={`/api/drive/file/${termoDoc.id}?download=1`}
-                              title={`Baixar termo de responsabilidade (${termoDoc.name})`}
-                            >
-                              <Download className="h-4 w-4" />
-                              <span className="sr-only">Baixar termo</span>
-                            </a>
-                          </Button>
+                          <p className="truncate text-[0.84rem] font-bold uppercase leading-tight text-slate-800" title={colaboradorNome}>
+                            {colaboradorNome}
+                          </p>
+                          <p
+                            className="mt-0.5 flex items-center gap-1 truncate text-[0.74rem] text-slate-500"
+                            title={colaborador?.centroCusto || "Sem centro de custo"}
+                          >
+                            <Building2 className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{colaborador?.centroCusto || "Sem centro de custo"}</span>
+                          </p>
+                          <div className="mt-1 flex items-center gap-1">
+                            {termoDoc ? (
+                              <>
+                                <span className="rounded border border-emerald-200 bg-emerald-50 px-1.5 text-[0.66rem] font-semibold uppercase text-emerald-700">
+                                  Termo
+                                </span>
+                                <a
+                                  href={`/api/drive/file/${termoDoc.id}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="rounded p-0.5 text-slate-500 hover:bg-violet-50 hover:text-violet-700"
+                                  title={`Visualizar termo de responsabilidade (${termoDoc.name})`}
+                                >
+                                  <Eye className="h-3.5 w-3.5" />
+                                  <span className="sr-only">Visualizar termo</span>
+                                </a>
+                                <a
+                                  href={`/api/drive/file/${termoDoc.id}?download=1`}
+                                  className="rounded p-0.5 text-slate-500 hover:bg-violet-50 hover:text-violet-700"
+                                  title={`Baixar termo de responsabilidade (${termoDoc.name})`}
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                  <span className="sr-only">Baixar termo</span>
+                                </a>
+                              </>
+                            ) : (
+                              <span
+                                className="rounded border border-amber-200 bg-amber-50 px-1.5 text-[0.66rem] font-semibold uppercase text-amber-700"
+                                title="Nenhum termo de responsabilidade anexado na ficha do colaborador"
+                              >
+                                Sem termo
+                              </span>
+                            )}
+                          </div>
                         </>
                       ) : (
-                        <span
-                          className="text-[0.72rem] text-muted-foreground"
-                          title="Nenhum termo de responsabilidade anexado na ficha do colaborador"
-                        >
-                          sem termo
-                        </span>
+                        <Badge variant="outline" className={`${STATUS_BADGE_CLASS} border-emerald-200 bg-emerald-50 text-emerald-700`}>
+                          Disponível
+                        </Badge>
                       )}
                     </div>
-                  ) : (
-                    <span className="text-[0.9rem] font-medium text-accent">Disponível</span>
-                  )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 shrink-0 gap-1.5 border-[#cfe3c4] bg-white px-2.5 text-[0.76rem] font-semibold text-[#2f6b25] hover:bg-[#f1f8ec] hover:text-[#2f6b25]"
+                      onClick={() => setDetailsVehicleId(vehicle.id)}
+                      title="Ficha do veículo: termos assinados e histórico de condutores"
+                    >
+                      <FileSearch className="h-3.5 w-3.5" />
+                      Ficha
+                    </Button>
+                  </div>
                 </TableCell>
                 {canManage ? (
                   <TableCell className={`sticky right-0 z-10 align-middle text-center shadow-[-1px_0_0_hsl(var(--border))] ${stickyActionClass}`}>
@@ -509,6 +546,15 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
           <div style={{ width: `${stickyScrollWidth}px` }} className="h-3" />
         </div>
       </div>
+      <VehicleDetailsDialog
+        vehicle={detailsVehicle}
+        colaboradores={colaboradores}
+        cardPlate={detailsCardPlate}
+        canManage={canManage}
+        onOpenChange={(open) => {
+          if (!open) setDetailsVehicleId(null)
+        }}
+      />
     </div>
   )
 }
