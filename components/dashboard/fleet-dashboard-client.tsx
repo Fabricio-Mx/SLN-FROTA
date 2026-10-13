@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import dynamic from "next/dynamic"
 import Link from "next/link"
-import { ArrowRight, CalendarRange, Car, CircleDollarSign, Download, Fuel, Plus, Search, Sparkles, Users } from "lucide-react"
+import { ArrowRight, CalendarRange, Car, CircleDollarSign, Fuel, Plus, Search, Sparkles, Users } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import type { AppUser, UserRole } from "@/lib/types"
 import { canAddColaboradores, canAddVehicles, canApproveOrdemServico, canEditMultaRhStatus, canManageFornecedores, canManageMultas, hasMasterAccess } from "@/lib/auth-shared"
@@ -18,6 +18,7 @@ import { SHOW_AGREGADOS_SECTION, getSectionMeta, type DashboardSection } from "@
 import { StatsCards } from "@/components/fleet/stats-cards"
 import { OverviewInsights } from "@/components/dashboard/overview-insights"
 import { BoletosMesPanel } from "@/components/dashboard/boletos-mes-panel"
+import { FleetClosingExportButton } from "@/components/dashboard/fleet-closing-export-button"
 import { Filters } from "@/components/fleet/filters"
 import { VehiclesTable } from "@/components/fleet/vehicles-table"
 import { VehicleModal } from "@/components/fleet/vehicle-modal"
@@ -747,19 +748,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
             <CalendarRange className="h-4 w-4" />
             {periodLabel}
           </span>
-          <Button
-            type="button"
-            onClick={() =>
-              toast({
-                title: "Exportação em breve",
-                description: "A exportação de relatórios será disponibilizada em uma próxima atualização.",
-              })
-            }
-            className="h-9 gap-2 bg-[#7CB342] text-white hover:bg-[#6d9d39] sm:h-10"
-          >
-            <Download className="h-4 w-4" />
-            Exportar Relatório
-          </Button>
+          <FleetClosingExportButton vehicles={vehicles} colaboradores={colaboradores} />
         </div>
       )
     }
