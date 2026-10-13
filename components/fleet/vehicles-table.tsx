@@ -246,7 +246,7 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
         </TableHeader>
         <TableBody>
           {vehicles.map((vehicle, index) => {
-            const hasContractExpiry = vehicle.tipoPropriedade === "alugado" && Boolean(vehicle.dataVencimentoContrato)
+            const hasContractExpiry = Boolean(vehicle.dataVencimentoContrato)
             const expired = hasContractExpiry && isContractExpired(vehicle.dataVencimentoContrato)
             const expiring = hasContractExpiry && isContractExpiring(vehicle.dataVencimentoContrato)
             const colaborador = getColaborador(vehicle.colaboradorId)
@@ -311,7 +311,7 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
                   )}
                 </TableCell>
                 <TableCell className="align-middle text-center text-[0.92rem] font-medium">
-                  {vehicle.tipoPropriedade === "proprio" ? "-" : formatCurrency(vehicle.mensalidade)}
+                  {vehicle.tipoPropriedade === "proprio" && !(vehicle.mensalidade > 0) ? "-" : formatCurrency(vehicle.mensalidade)}
                 </TableCell>
                 <TableCell className="align-middle text-center">
                   {hasContractExpiry ? (

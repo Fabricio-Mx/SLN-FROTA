@@ -82,8 +82,8 @@ export function VehicleModal({
         modelo: vehicle.modelo || "",
         km: vehicle.km ?? 0,
         kmUltimaRevisao: vehicle.kmUltimaRevisao ?? null,
-        mensalidade: vehicle.tipoPropriedade === "proprio" ? 0 : vehicle.mensalidade ?? 0,
-        dataVencimentoContrato: vehicle.tipoPropriedade === "proprio" ? "" : vehicle.dataVencimentoContrato || "",
+        mensalidade: vehicle.mensalidade ?? 0,
+        dataVencimentoContrato: vehicle.dataVencimentoContrato || "",
         tipoPropriedade: vehicle.tipoPropriedade || "proprio",
         empresaLocacao:
           vehicle.tipoPropriedade === "alugado"
@@ -226,8 +226,6 @@ export function VehicleModal({
         ...formData,
         placa: formData.placa.toUpperCase(),
         chassi: formData.chassi.toUpperCase(),
-        mensalidade: formData.tipoPropriedade === "proprio" ? 0 : formData.mensalidade,
-        dataVencimentoContrato: formData.tipoPropriedade === "proprio" ? "" : formData.dataVencimentoContrato,
         empresaLocacao:
           formData.tipoPropriedade === "alugado" && formData.empresaLocacao === "veiculo_sln"
             ? null
@@ -262,8 +260,6 @@ export function VehicleModal({
                     ...formData,
                     tipoPropriedade: value as "alugado" | "proprio",
                     empresaLocacao: value === "proprio" ? null : formData.empresaLocacao,
-                    mensalidade: value === "proprio" ? 0 : formData.mensalidade,
-                    dataVencimentoContrato: value === "proprio" ? "" : formData.dataVencimentoContrato,
                     fornecedorProprio:
                       value === "alugado"
                         ? null
@@ -334,25 +330,23 @@ export function VehicleModal({
                 )}
               </div>
             )}
-            {formData.tipoPropriedade === "alugado" && (
-              <div className="grid gap-2">
-                <Label htmlFor="mensalidade">Valor da Mensalidade (R$)</Label>
-                <Input
-                  id="mensalidade"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0,00"
-                  value={formData.mensalidade || ""}
-                  onChange={(e) =>
-                    setFormData({ ...formData, mensalidade: parseFloat(e.target.value) || 0 })
-                  }
-                />
-                {errors.mensalidade && (
-                  <p className="text-sm text-destructive">{errors.mensalidade}</p>
-                )}
-              </div>
-            )}
+            <div className="grid gap-2">
+              <Label htmlFor="mensalidade">Valor da Mensalidade (R$)</Label>
+              <Input
+                id="mensalidade"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0,00"
+                value={formData.mensalidade || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, mensalidade: parseFloat(e.target.value) || 0 })
+                }
+              />
+              {errors.mensalidade && (
+                <p className="text-sm text-destructive">{errors.mensalidade}</p>
+              )}
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="placa">Placa</Label>
               <Input
@@ -455,24 +449,24 @@ export function VehicleModal({
                   : "Informe o KM da última revisão para calcular automaticamente a próxima em 10.000 km."}
               </p>
             </div>
-            {formData.tipoPropriedade === "alugado" && (
-              <div className="grid gap-2">
-                <Label htmlFor="dataVencimento">Data de Vencimento do Contrato</Label>
-                <Input
-                  id="dataVencimento"
-                  type="date"
-                  value={formData.dataVencimentoContrato}
-                  onChange={(e) =>
-                    setFormData({ ...formData, dataVencimentoContrato: e.target.value })
-                  }
-                />
-                {errors.dataVencimentoContrato && (
-                  <p className="text-sm text-destructive">
-                    {errors.dataVencimentoContrato}
-                  </p>
-                )}
-              </div>
-            )}
+            <div className="grid gap-2">
+              <Label htmlFor="dataVencimento">
+                {formData.tipoPropriedade === "alugado" ? "Data de Vencimento do Contrato" : "Data de Vencimento (opcional)"}
+              </Label>
+              <Input
+                id="dataVencimento"
+                type="date"
+                value={formData.dataVencimentoContrato}
+                onChange={(e) =>
+                  setFormData({ ...formData, dataVencimentoContrato: e.target.value })
+                }
+              />
+              {errors.dataVencimentoContrato && (
+                <p className="text-sm text-destructive">
+                  {errors.dataVencimentoContrato}
+                </p>
+              )}
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="imagens">Imagens do Veículo</Label>
               <Input
