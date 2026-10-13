@@ -6,6 +6,7 @@ import { CalendarDays, Download, FileSpreadsheet, Fuel, Search } from "lucide-re
 import { Bar, BarChart, CartesianGrid, LabelList, XAxis, YAxis } from "recharts"
 import { resolveCostCenterRecord, normalizeCostCenterDriverName } from "@/lib/cost-center-shared"
 import { parseFuelDateTime } from "@/lib/fuel-datetime"
+import { buildConsolidatedWorkbook, downloadBlob } from "@/lib/fuel-consolidated-export"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { fuelFetcher, FUEL_DATA_SWR_KEY, type FuelResponse } from "@/hooks/use-fuel-data"
 import { Button } from "@/components/ui/button"
@@ -107,7 +108,7 @@ function formatCompactCurrency(value: number): string {
 function buildExportFileName(start: Date, end: Date): string {
   const startLabel = formatDateInputValue(start)
   const endLabel = formatDateInputValue(end)
-  return `combustivel-consolidado-${startLabel}_a_${endLabel}.xlsx`
+  return `combustivel-relatorio-${startLabel}_a_${endLabel}.xlsx`
 }
 
 export function FuelConsolidatedReport() {
@@ -343,29 +344,27 @@ export function FuelConsolidatedReport() {
     }
 
     try {
-      const XLSX = await import("xlsx")
-      const sheetRows = consolidatedRows.map((row) => ({
-        "CENTRO DE CUSTO": row.centroCusto,
-        "NOME MOTORISTA": row.motorista,
-        "VALOR DA TRANSAÇÃO": row.valorTransacao,
-        "PLACA CARTÃO": row.placaCartao,
-      }))
+      const hasNarrowingFilter = selectedSupervisor !== "todos" || selectedCoordenador !== "todos" || search.trim() !== ""
+      const appliedFilters = [
+        selectedSupervisor !== "todos" ? `Supervisor: ${selectedSupervisor}` : null,
+        selectedCoordenador !== "todos" ? `Coordenação: ${selectedCoordenador}` : null,
+        search.trim() ? `Busca: "${search.trim()}"` : null,
+      ].filter((value): value is string => Boolean(value))
 
-      const worksheet = XLSX.utils.json_to_sheet(sheetRows)
-      worksheet["!cols"] = [
-        { wch: 28 },
-        { wch: 34 },
-        { wch: 18 },
-        { wch: 16 },
-      ]
-
-      const workbook = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Consolidado")
-      XLSX.writeFile(workbook, buildExportFileName(effectiveRange.start, effectiveRange.end))
+      const blob = await buildConsolidatedWorkbook({
+        rows: consolidatedRows,
+        // Sem filtros de pessoa/busca, o resumo lista todos os centros cadastrados (zerados aparecem como "-").
+        extraCostCenters: hasNarrowingFilter ? [] : lookup.records.map((record) => record.centroCusto),
+        start: effectiveRange.start,
+        end: effectiveRange.end,
+        totalAbastecimentos: filteredRecords.length,
+        appliedFilters,
+      })
+      downloadBlob(blob, buildExportFileName(effectiveRange.start, effectiveRange.end))
 
       toast({
         title: "Planilha exportada",
-        description: "O consolidado foi exportado em Excel com centro de custo, motorista, valor e placa do cartão.",
+        description: "Relatório gerado com detalhamento por motorista e resumo por centro de custo.",
       })
     } catch (error) {
       toast({
@@ -519,7 +518,7 @@ export function FuelConsolidatedReport() {
         </div>
 
         <div className="rounded-2xl border border-dashed border-[#d7e2d0] bg-[#fbfdf9] p-4 text-sm text-slate-500">
-          A planilha sai com as colunas CENTRO DE CUSTO, NOME MOTORISTA, VALOR DA TRANSAÇÃO e PLACA CARTÃO, no mesmo recorte aplicado na tela.
+          A planilha sai formatada para envio: detalhamento (CENTRO DE CUSTO, NOME MOTORISTA, VALOR DA TRANSAÇÃO e PLACA CARTÃO) ordenado do maior para o menor valor e, ao lado, o resumo de gastos por centro de custo com total geral, no mesmo recorte aplicado na tela.
         </div>
 
         <Card className="overflow-hidden border-[#d8dfd1] bg-[linear-gradient(180deg,#fbfcfa_0%,#f4f7f1_100%)] shadow-sm">
