@@ -141,6 +141,59 @@ export function getRegistryLabelsByBudgetCenter(
   return result
 }
 
+/**
+ * Converte o rotulo do cadastro de centro de custo no codigo do centro usado pelo orcamento.
+ * Rotulos que sao apenas alias de um centro do plano (ex.: "FRANCA / SP") ficam separados, como no relatorio consolidado.
+ */
+export function createBudgetCenterCodeResolver(
+  planCenters: Array<Pick<FuelBudgetCenter, "centerCode" | "centerLabel">>,
+  registryRecords: Array<{ centroCusto: string }>,
+): (registryLabel: string) => string {
+  const registryLabels = getRegistryLabelsByBudgetCenter(registryRecords, planCenters)
+  const planLabels = new Map(planCenters.map((center) => [center.centerCode, center.centerLabel]))
+  const cache = new Map<string, string>()
+
+  return (registryLabel: string) => {
+    const label = normalizeCostCenterLabel(registryLabel ?? "")
+    if (!label) return ""
+    const cached = cache.get(label)
+    if (cached !== undefined) return cached
+
+    const nameKey = getCostCenterNameKey(label)
+    const planCode = resolveBudgetCenterId(label, planCenters)
+    const planLabel = planCode ? registryLabels.get(planCode) ?? planLabels.get(planCode) : undefined
+    const resolved =
+      planLabel !== undefined && getCostCenterNameKey(planLabel) === nameKey ? planCode : nameKey ? `${NAME_CENTER_PREFIX}${nameKey}` : planCode
+
+    cache.set(label, resolved)
+    return resolved
+  }
+}
+
+/** Move um colaborador do plano para outro centro (o centro de destino precisa existir no plano). */
+export function moveBudgetCollaborator(plan: FuelBudgetPlan, fromCenterCode: string, collaboratorId: string, toCenterCode: string): FuelBudgetPlan {
+  if (fromCenterCode === toCenterCode) return plan
+  const source = plan.centers.find((center) => center.centerCode === fromCenterCode)
+  const collaborator = source?.collaborators.find((item) => item.id === collaboratorId)
+  if (!collaborator || !plan.centers.some((center) => center.centerCode === toCenterCode)) return plan
+
+  const collaboratorKey = normalizeCostCenterDriverName(collaborator.name)
+
+  return {
+    ...plan,
+    centers: plan.centers.map((center) => {
+      if (center.centerCode === fromCenterCode) {
+        return { ...center, collaborators: center.collaborators.filter((item) => item.id !== collaboratorId) }
+      }
+      if (center.centerCode === toCenterCode) {
+        const withoutDuplicate = center.collaborators.filter((item) => normalizeCostCenterDriverName(item.name) !== collaboratorKey)
+        return { ...center, collaborators: [...withoutDuplicate, collaborator] }
+      }
+      return center
+    }),
+  }
+}
+
 function toMoney(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number(value)
   if (!Number.isFinite(parsed) || parsed < 0) return 0
@@ -541,13 +594,7 @@ export function buildFuelBudgetAnalysis(params: {
   const resolvedByDriver = new Map<string, { centerCode: string; centerLabel: string; collaboratorId: string | null }>()
 
   // Rotulos do cadastro que so sao alias de um centro do plano (ex.: "FRANCA / SP") ficam separados, como no relatorio.
-  const resolveRegistryCenterCode = (registryLabel: string): string => {
-    const nameKey = getCostCenterNameKey(registryLabel)
-    const planCode = resolveBudgetCenterId(registryLabel, plan.centers)
-    const planCenter = planCode ? centers.get(planCode) : undefined
-    if (planCenter?.inPlan && getCostCenterNameKey(planCenter.centerLabel) === nameKey) return planCode
-    return nameKey ? `${NAME_CENTER_PREFIX}${nameKey}` : planCode
-  }
+  const resolveRegistryCenterCode = createBudgetCenterCodeResolver(plan.centers, costCenterLookup.records)
 
   const monthRecords = records
     .map((record) => ({ record, date: parseFuelDateTime(record.dateTime) }))

@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react"
 import {
+  ArrowRightLeft,
   CalendarDays,
   Download,
   FileSpreadsheet,
@@ -23,15 +24,17 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { useFuelBudgetAnalysis } from "@/hooks/use-fuel-budget-analysis"
+import { useFuelBudgetAnalysis, type FuelBudgetRegistryOverride } from "@/hooks/use-fuel-budget-analysis"
 import { FUEL_BUDGET_PLAN_SWR_KEY, useFuelBudgetPlan } from "@/hooks/use-fuel-budget-plan"
+import { FUEL_COST_CENTER_SWR_KEY, useFuelCostCenters } from "@/hooks/use-fuel-cost-centers"
 import { useToast } from "@/hooks/use-toast"
-import { normalizeCostCenterDriverName, normalizeCostCenterLabel } from "@/lib/cost-center-shared"
+import { normalizeCostCenterDriverName, normalizeCostCenterLabel, resolveCostCenterRecord } from "@/lib/cost-center-shared"
 import {
   FUEL_BUDGET_DEFAULT_DAYS_PER_WEEK,
   FUEL_BUDGET_STATUS_LABEL,
@@ -40,6 +43,7 @@ import {
   formatBudgetCenterName,
   getFuelBudgetStatus,
   isDefaultTelecomBudgetCenter,
+  moveBudgetCollaborator,
   normalizeBudgetPlate,
   normalizeFuelBudgetPlan,
   resolveBudgetCenterId,
@@ -65,6 +69,19 @@ type NewCollaboratorDraft = {
 }
 
 const EMPTY_NEW_COLLABORATOR: NewCollaboratorDraft = { name: "", plate: "", dailyValue: "", daysPerWeek: `${FUEL_BUDGET_DEFAULT_DAYS_PER_WEEK}` }
+
+type MoveTarget = {
+  code: string
+  label: string
+  inPlan: boolean
+  group: FuelBudgetGroup | null
+}
+
+type MoveRequest = {
+  centerCode: string
+  collaboratorId?: string
+  driverName?: string
+}
 
 function parseDecimal(value: string): number {
   const trimmed = value.trim()
@@ -103,11 +120,15 @@ export function FuelBudgetPanel({ isMaster = false }: FuelBudgetPanelProps) {
   const [selectedCenterCode, setSelectedCenterCode] = useState<string | null>(null)
   const [newCollaborator, setNewCollaborator] = useState<NewCollaboratorDraft>(EMPTY_NEW_COLLABORATOR)
   const [centerToAdd, setCenterToAdd] = useState("")
+  const [registryMoves, setRegistryMoves] = useState<Record<string, FuelBudgetRegistryOverride>>({})
+  const [moveRequest, setMoveRequest] = useState<MoveRequest | null>(null)
+  const { lookup: savedCostCenterLookup, mutate: mutateCostCenters } = useFuelCostCenters()
 
   const workingPlan = draft ?? serverPlan
-  const isDirty = draft !== null
+  const registryOverrides = useMemo(() => Object.values(registryMoves), [registryMoves])
+  const isDirty = draft !== null || registryOverrides.length > 0
   const canEdit = isMaster
-  const { analysis, monthKey, monthLabel, costCenterRecords } = useFuelBudgetAnalysis(workingPlan)
+  const { analysis, monthKey, monthLabel, costCenterRecords } = useFuelBudgetAnalysis(workingPlan, registryOverrides)
 
   const planCentersByCode = useMemo(() => new Map(workingPlan.centers.map((center) => [center.centerCode, center])), [workingPlan.centers])
 
@@ -156,6 +177,90 @@ export function FuelBudgetPanel({ isMaster = false }: FuelBudgetPanelProps) {
       .filter((name) => name && !listed.has(normalizeCostCenterDriverName(name)))
       .sort((left, right) => left.localeCompare(right, "pt-BR"))
   }, [activeCenterCode, activePlanCenter?.collaborators, costCenterRecords, workingPlan.centers])
+
+  const moveTargets = useMemo<MoveTarget[]>(() => {
+    const currentLabels = new Map(analysis.centers.map((center) => [center.centerCode, center.centerLabel]))
+    return [
+      ...workingPlan.centers.map((center) => ({
+        code: center.centerCode,
+        label: currentLabels.get(center.centerCode) ?? center.centerLabel,
+        inPlan: true,
+        group: center.group,
+      })),
+      ...registryCenters.map((center) => ({ code: center.code, label: center.label, inPlan: false, group: null })),
+    ]
+  }, [analysis.centers, registryCenters, workingPlan.centers])
+
+  const moveSource = useMemo(() => {
+    if (!moveRequest) return null
+    const center = planCentersByCode.get(moveRequest.centerCode) ?? null
+    const collaborator = moveRequest.collaboratorId
+      ? center?.collaborators.find((item) => item.id === moveRequest.collaboratorId) ?? null
+      : null
+    const name = collaborator?.name ?? moveRequest.driverName ?? ""
+    if (!name || (moveRequest.collaboratorId && !collaborator)) return null
+    const analysisCenter = analysis.centers.find((item) => item.centerCode === moveRequest.centerCode)
+    const label = analysisCenter?.centerLabel ?? center?.centerLabel ?? ""
+    return { centerCode: moveRequest.centerCode, center, collaborator, name, label }
+  }, [analysis.centers, moveRequest, planCentersByCode])
+
+  function handleMoveCollaborator(targetCode: string) {
+    if (!moveSource) return
+    const target = moveTargets.find((item) => item.code === targetCode)
+    if (!target || target.code === moveSource.centerCode) return
+
+    const { center: sourceCenter, collaborator, name } = moveSource
+    const sourceGroup: FuelBudgetGroup = sourceCenter?.group ?? "outros"
+    if (sourceCenter && collaborator) {
+      updatePlan((plan) => {
+        const withTarget = plan.centers.some((center) => center.centerCode === target.code)
+          ? plan
+          : normalizeFuelBudgetPlan({
+              ...plan,
+              centers: [
+                ...plan.centers,
+                { centerCode: target.code, centerLabel: target.label, group: sourceGroup, manualMonthlyBudget: 0, collaborators: [] },
+              ],
+            })
+        return moveBudgetCollaborator(withTarget, sourceCenter.centerCode, collaborator.id, target.code)
+      })
+    }
+
+    // O gasto de cada abastecimento segue o cadastro de centro de custo, por isso o cadastro tambem muda ao salvar.
+    const savedRecord = resolveCostCenterRecord(name, savedCostCenterLookup)
+    const motorista = savedRecord?.motorista ?? name
+    const key = normalizeCostCenterDriverName(motorista)
+    setRegistryMoves((current) => {
+      const next = { ...current }
+      if (savedRecord && normalizeCostCenterLabel(savedRecord.centroCusto) === normalizeCostCenterLabel(target.label)) {
+        delete next[key]
+      } else {
+        next[key] = {
+          motorista,
+          centroCusto: target.label,
+          supervisor: savedRecord?.supervisor ?? "",
+          coordenador: savedRecord?.coordenador ?? "",
+          previousMotorista: savedRecord?.motorista ?? null,
+        }
+      }
+      return next
+    })
+
+    if (sourceCenter && collaborator) {
+      setGroupView(target.group ?? sourceGroup)
+      setSelectedCenterCode(target.code)
+    }
+    setMoveRequest(null)
+    toast({
+      title: "Colaborador movido",
+      description: `${name} foi para ${formatBudgetCenterName({ centerLabel: target.label })}. Clique em Salvar alterações para confirmar.`,
+    })
+  }
+
+  function discardChanges() {
+    setDraft(null)
+    setRegistryMoves({})
+  }
 
   function updatePlan(updater: (plan: FuelBudgetPlan) => FuelBudgetPlan) {
     setDraft((current) => updater(current ?? serverPlan))
@@ -240,10 +345,30 @@ export function FuelBudgetPanel({ isMaster = false }: FuelBudgetPanelProps) {
   }
 
   async function handleSave() {
-    if (!draft) return
+    if (!isDirty) return
     setIsSaving(true)
 
     try {
+      const pendingMoves = Object.values(registryMoves)
+      for (const move of pendingMoves) {
+        const response = await fetch(FUEL_COST_CENTER_SWR_KEY, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(move),
+        })
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(payload?.error || `Falha ao atualizar o centro de custo de ${move.motorista}.`)
+      }
+      if (pendingMoves.length > 0) {
+        await mutateCostCenters()
+        setRegistryMoves({})
+      }
+
+      if (!draft) {
+        toast({ title: "Centro de custo atualizado", description: "O cadastro de centro de custo foi atualizado." })
+        return
+      }
+
       const currentLabels = new Map(analysis.centers.map((center) => [center.centerCode, center.centerLabel]))
       const planToSave: FuelBudgetPlan = {
         ...draft,
@@ -264,7 +389,9 @@ export function FuelBudgetPanel({ isMaster = false }: FuelBudgetPanelProps) {
         description:
           payload?.storage === "local"
             ? "Salvo apenas localmente. Verifique a conexão com o Google Drive."
-            : "Os valores de orçado foram atualizados.",
+            : pendingMoves.length > 0
+              ? `Os valores de orçado e o centro de custo de ${pendingMoves.length} colaborador(es) foram atualizados.`
+              : "Os valores de orçado foram atualizados.",
       })
     } catch (error) {
       toast({
@@ -388,9 +515,14 @@ export function FuelBudgetPanel({ isMaster = false }: FuelBudgetPanelProps) {
           {warning ? <p className="rounded-xl border border-[#ecd9a6] bg-[#fffaea] px-3 py-2 text-sm text-[#8a6513]">{warning}</p> : null}
           {isDirty ? (
             <div className="flex flex-col gap-2 rounded-xl border border-[#ecd9a6] bg-[#fffaea] px-3 py-2 text-sm text-[#8a6513] sm:flex-row sm:items-center sm:justify-between">
-              <span>Há alterações não salvas. Os números abaixo já mostram a simulação com os novos valores.</span>
+              <span>
+                Há alterações não salvas. Os números abaixo já mostram a simulação com os novos valores.
+                {registryOverrides.length > 0
+                  ? ` Ao salvar, o cadastro de centro de custo de ${registryOverrides.map((move) => move.motorista).join(", ")} também será atualizado.`
+                  : null}
+              </span>
               <div className="flex gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setDraft(null)} disabled={isSaving}>
+                <Button variant="ghost" size="sm" onClick={discardChanges} disabled={isSaving}>
                   <RotateCcw className="mr-1.5 h-4 w-4" />
                   Descartar
                 </Button>
@@ -517,6 +649,8 @@ export function FuelBudgetPanel({ isMaster = false }: FuelBudgetPanelProps) {
             onUpdateCenter={(updater) => activeCenterCode && updateCenter(activeCenterCode, updater)}
             onUpdateCollaborator={(id, patch) => activeCenterCode && updateCollaborator(activeCenterCode, id, patch)}
             onRemoveCollaborator={(id) => activeCenterCode && removeCollaborator(activeCenterCode, id)}
+            onMoveCollaborator={(id) => activeCenterCode && setMoveRequest({ centerCode: activeCenterCode, collaboratorId: id })}
+            onMoveDriver={(name) => activeCenterCode && setMoveRequest({ centerCode: activeCenterCode, driverName: name })}
             onAddToPlan={() => activeAnalysis && ensureCenterInPlan(activeAnalysis.centerCode, activeAnalysis.centerLabel, "outros")}
             onRemoveCenter={() => activeCenterCode && removeCenter(activeCenterCode)}
           />
@@ -526,7 +660,99 @@ export function FuelBudgetPanel({ isMaster = false }: FuelBudgetPanelProps) {
           </Card>
         )}
       </div>
+
+      <MoveCollaboratorDialog
+        key={moveRequest ? `${moveRequest.centerCode}:${moveRequest.collaboratorId ?? moveRequest.driverName}` : "closed"}
+        open={moveSource !== null}
+        collaboratorName={moveSource?.name ?? ""}
+        isPlanCollaborator={Boolean(moveSource?.collaborator)}
+        sourceCode={moveSource?.centerCode ?? ""}
+        sourceLabel={moveSource?.label ?? ""}
+        targets={moveTargets}
+        onOpenChange={(open) => !open && setMoveRequest(null)}
+        onConfirm={handleMoveCollaborator}
+      />
     </div>
+  )
+}
+
+function MoveCollaboratorDialog({
+  open,
+  collaboratorName,
+  isPlanCollaborator,
+  sourceCode,
+  sourceLabel,
+  targets,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean
+  collaboratorName: string
+  isPlanCollaborator: boolean
+  sourceCode: string
+  sourceLabel: string
+  targets: MoveTarget[]
+  onOpenChange: (open: boolean) => void
+  onConfirm: (targetCode: string) => void
+}) {
+  const [targetCode, setTargetCode] = useState("")
+  const available = targets.filter((target) => target.code !== sourceCode)
+  const groups: Array<{ label: string; items: MoveTarget[] }> = [
+    { label: "Telecom", items: available.filter((target) => target.group === "telecom") },
+    { label: "Outros centros do orçamento", items: available.filter((target) => target.group === "outros") },
+    { label: "Outros centros do cadastro", items: available.filter((target) => !target.inPlan) },
+  ]
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>Mudar centro de custo</DialogTitle>
+          <DialogDescription>
+            Move <span className="font-semibold text-slate-800">{collaboratorName}</span> de{" "}
+            <span className="font-semibold text-slate-800">{formatBudgetCenterName({ centerLabel: sourceLabel })}</span> para outro centro
+            {isPlanCollaborator ? ", mantendo diária, placa e dias trabalhados." : "."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2 py-1">
+          <Label className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Novo centro de custo</Label>
+          <Select value={targetCode} onValueChange={setTargetCode}>
+            <SelectTrigger className="h-10 bg-white text-left">
+              <SelectValue placeholder="Selecione o centro de destino..." />
+            </SelectTrigger>
+            <SelectContent>
+              {groups
+                .filter((group) => group.items.length > 0)
+                .map((group) => (
+                  <SelectGroup key={group.label}>
+                    <SelectLabel className="text-[11px] uppercase tracking-[0.08em] text-slate-400">{group.label}</SelectLabel>
+                    {group.items.map((target) => (
+                      <SelectItem key={target.code} value={target.code}>
+                        {formatBudgetCenterName({ centerLabel: target.label })}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] text-slate-500">
+            Ao salvar, o cadastro de centro de custo do colaborador também é atualizado, para que os abastecimentos passem a contar no novo
+            centro (orçamento, painel diário/semanal e consolidado).
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button className="bg-[#4e8f57] hover:bg-[#437c4b]" disabled={!targetCode} onClick={() => onConfirm(targetCode)}>
+            <ArrowRightLeft className="mr-1.5 h-4 w-4" />
+            Mover colaborador
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -568,6 +794,8 @@ type CenterDetailProps = {
   onUpdateCenter: (updater: (center: FuelBudgetCenter) => FuelBudgetCenter) => void
   onUpdateCollaborator: (id: string, patch: Partial<FuelBudgetCollaborator>) => void
   onRemoveCollaborator: (id: string) => void
+  onMoveCollaborator: (id: string) => void
+  onMoveDriver: (name: string) => void
   onAddToPlan: () => void
   onRemoveCenter: () => void
 }
@@ -586,6 +814,8 @@ function CenterDetail({
   onUpdateCenter,
   onUpdateCollaborator,
   onRemoveCollaborator,
+  onMoveCollaborator,
+  onMoveDriver,
   onAddToPlan,
   onRemoveCenter,
 }: CenterDetailProps) {
@@ -736,7 +966,7 @@ function CenterDetail({
                   ))}
                   <TableHead className="text-right">Gasto mês</TableHead>
                   <TableHead className="text-right">Saldo</TableHead>
-                  {editable ? <TableHead className="w-[44px]" /> : null}
+                  {editable ? <TableHead className="w-[84px]" /> : null}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -833,15 +1063,26 @@ function CenterDetail({
                       </TableCell>
                       {editable ? (
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-slate-400 hover:text-[#b03e31]"
-                            onClick={() => onRemoveCollaborator(collaborator.id)}
-                            title="Remover colaborador"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-slate-400 hover:text-[#4e8f57]"
+                              onClick={() => onMoveCollaborator(collaborator.id)}
+                              title="Mudar de centro de custo"
+                            >
+                              <ArrowRightLeft className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-slate-400 hover:text-[#b03e31]"
+                              onClick={() => onRemoveCollaborator(collaborator.id)}
+                              title="Remover colaborador"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       ) : null}
                     </TableRow>
@@ -960,6 +1201,17 @@ function CenterDetail({
                       + incluir
                     </button>
                   ) : null}
+                  {canEdit && isMovableDriverName(driver.name) ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded border border-[#cfe3c4] bg-white px-1.5 py-0.5 text-[10px] font-semibold text-[#3f6b33] hover:bg-[#f3faef]"
+                      onClick={() => onMoveDriver(driver.name)}
+                      title="Mudar de centro de custo"
+                    >
+                      <ArrowRightLeft className="h-3 w-3" />
+                      mover
+                    </button>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -968,6 +1220,10 @@ function CenterDetail({
       </CardContent>
     </Card>
   )
+}
+
+function isMovableDriverName(name: string): boolean {
+  return Boolean(name) && !name.startsWith("CPF ") && name !== "Não identificado"
 }
 
 function MiniStat({ label, value, tone }: { label: string; value: number; tone?: "success" | "danger" }) {

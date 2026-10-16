@@ -37,6 +37,7 @@ export interface Vehicle {
   frota: boolean
   naOficina: boolean
   paraRevisao: boolean
+  revisaoAgendadaEm?: string | null
   semParar: boolean
   tipoContratacao?: 'clt' | 'pj' | string | null
   cpfAgregado?: string | null

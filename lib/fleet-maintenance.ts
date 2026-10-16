@@ -33,3 +33,37 @@ export function getVehicleReviewMilestone(vehicle: Pick<Vehicle, "km" | "kmUltim
     emAtraso: kmRestante <= 0,
   }
 }
+function parseReviewSchedule(value?: string | null): Date | null {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+/** Ex.: "18/10/2026 às 09:30" (horario local). */
+export function formatReviewSchedule(value?: string | null): string | null {
+  const date = parseReviewSchedule(value)
+  if (!date) return null
+  const day = date.toLocaleDateString("pt-BR")
+  const time = date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+  return `${day} às ${time}`
+}
+
+export function isReviewSchedulePast(value?: string | null, now: Date = new Date()): boolean {
+  const date = parseReviewSchedule(value)
+  return date !== null && date.getTime() < now.getTime()
+}
+
+/** Valor ISO salvo no banco -> valor do input datetime-local ("2026-10-18T09:30"). */
+export function toReviewScheduleInputValue(value?: string | null): string {
+  const date = parseReviewSchedule(value)
+  if (!date) return ""
+  const pad = (part: number) => `${part}`.padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/** Valor do input datetime-local (horario local) -> ISO para o banco. */
+export function fromReviewScheduleInputValue(value: string): string | null {
+  if (!value.trim()) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}

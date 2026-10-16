@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import useSWR from "swr"
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Line, Pie, PieChart, XAxis, YAxis } from "recharts"
 import { AlertTriangle, Building2, CalendarDays, CalendarRange, Droplets, Fuel, Receipt, TrendingUp, Users } from "lucide-react"
@@ -18,13 +18,17 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { useToast } from "@/hooks/use-toast"
 import { useFuelCostCenters } from "@/hooks/use-fuel-cost-centers"
-import { FUEL_DAILY_BUDGET_SWR_KEY, useFuelDailyBudgets } from "@/hooks/use-fuel-daily-budgets"
+import { useFuelBudgetPlan } from "@/hooks/use-fuel-budget-plan"
 import { fuelFetcher, FUEL_DATA_SWR_KEY, type FuelResponse } from "@/hooks/use-fuel-data"
 import { getFuelFinancialPostingCycleBounds } from "@/lib/fuel-billing"
-import { normalizeCostCenterDriverName, resolveCostCenterRecord } from "@/lib/cost-center-shared"
-import { extractCostCenterCode, type FuelDailyBudgetItem } from "@/lib/fuel-daily-budget-shared"
+import { normalizeCostCenterDriverName, resolveCostCenterRecord, type CostCenterLookup } from "@/lib/cost-center-shared"
+import {
+  computeCenterBudgetTotals,
+  createBudgetCenterCodeResolver,
+  formatBudgetCenterName,
+  getRegistryLabelsByBudgetCenter,
+} from "@/lib/fuel-budget-plan-shared"
 import { isEngineeringCostCenter, isTelecomCostCenter } from "@/lib/fuel-telecom-centers"
 import { parseFuelDateTime } from "@/lib/fuel-datetime"
 
@@ -131,12 +135,6 @@ function formatCurrency(value: number): string {
     style: "currency",
     currency: "BRL",
   }).format(value)
-}
-
-function parseBudgetInputValue(value: string): number {
-  const normalized = value.replace(/\./g, "").replace(",", ".")
-  const parsed = Number(normalized)
-  return Number.isFinite(parsed) ? parsed : Number.NaN
 }
 
 function getBudgetVarianceLabel(value: number): string {
@@ -271,6 +269,26 @@ function normalizePersonName(name: string, cpf: string): string {
   if (trimmed && !trimmed.toLowerCase().includes("veiculo sem motorista")) return trimmed
   if (cpf.trim()) return `CPF ${cpf.trim()}`
   return "Não identificado"
+}
+
+/** Gasto por centro do orcamento, usando o cadastro de centro de custo de cada motorista (mesma regra da aba Orcamento). */
+function sumSpentByBudgetCenter(
+  records: FuelRecordWithDate[],
+  costCenterLookup: CostCenterLookup,
+  resolveBudgetCenterCode: (registryLabel: string) => string,
+  centerCodes: Set<string>,
+): Map<string, number> {
+  const totals = new Map<string, number>()
+
+  for (const record of records) {
+    const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+    const registryLabel = resolveCostCenterRecord(driver, costCenterLookup)?.centroCusto ?? ""
+    const centerCode = registryLabel ? resolveBudgetCenterCode(registryLabel) : ""
+    if (!centerCode || !centerCodes.has(centerCode)) continue
+    totals.set(centerCode, (totals.get(centerCode) ?? 0) + record.valor)
+  }
+
+  return totals
 }
 
 function normalizeSearchValue(value: string): string {
@@ -413,20 +431,32 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
     selectedMonth,
     setSelectedMonth,
   } = useFuelDataContext()
-  const { toast } = useToast()
   const { lookup: costCenterLookup } = useFuelCostCenters()
-  const registryLabelByCode = useMemo(() => {
-    const labels = new Map<string, string>()
-    for (const record of costCenterLookup.records) {
-      const code = extractCostCenterCode(record.centroCusto)
-      if (code && !labels.has(code)) labels.set(code, record.centroCusto)
-    }
-    return labels
-  }, [costCenterLookup])
-  const { items: dailyBudgetItems, isLoading: isDailyBudgetLoading, mutate: mutateDailyBudgets } = useFuelDailyBudgets()
-  const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({})
-  const [isBudgetEditMode, setIsBudgetEditMode] = useState(false)
-  const [savingBudgetCenterCode, setSavingBudgetCenterCode] = useState<string | null>(null)
+  const { plan: budgetPlan, hasLoaded: hasBudgetPlanLoaded } = useFuelBudgetPlan()
+  // Mesma regra da aba Orcamento: o centro de cada abastecimento vem do cadastro e o orcado vem do plano.
+  const resolveBudgetCenterCode = useMemo(
+    () => createBudgetCenterCodeResolver(budgetPlan.centers, costCenterLookup.records),
+    [budgetPlan.centers, costCenterLookup.records],
+  )
+  const telecomBudgetCenters = useMemo(() => {
+    const registryLabels = getRegistryLabelsByBudgetCenter(costCenterLookup.records, budgetPlan.centers)
+    return budgetPlan.centers
+      .filter((center) => center.group === "telecom")
+      .map((center) => {
+        const totals = computeCenterBudgetTotals(center)
+        return {
+          centerCode: center.centerCode,
+          centerLabel: formatBudgetCenterName({ centerLabel: registryLabels.get(center.centerCode) ?? center.centerLabel }),
+          daily: totals.daily,
+          weekly: totals.weekly,
+        }
+      })
+  }, [budgetPlan.centers, costCenterLookup.records])
+  const telecomBudgetCenterCodes = useMemo(() => new Set(telecomBudgetCenters.map((center) => center.centerCode)), [telecomBudgetCenters])
+  const isTelecomScopeCenter = useCallback(
+    (centerLabel: string) => isTelecomCostCenter(centerLabel) || telecomBudgetCenterCodes.has(resolveBudgetCenterCode(centerLabel)),
+    [resolveBudgetCenterCode, telecomBudgetCenterCodes],
+  )
   const [analyticsPreset, setAnalyticsPreset] = useState<FuelAnalyticsPreset>("current-month")
   const defaultCustomStart = useMemo(() => toDateInputValue(startOfMonth(monthlyReferenceDate)), [monthlyReferenceDate])
   const defaultCustomEnd = useMemo(() => toDateInputValue(reportDate), [reportDate])
@@ -869,9 +899,9 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
       const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
       const resolved = resolveCostCenterRecord(driver, costCenterLookup)
       const centerLabel = resolved?.centroCusto || "Sem centro de custo"
-      return dailyScopeFilter === "telecom" ? isTelecomCostCenter(centerLabel) : isEngineeringCostCenter(centerLabel)
+      return dailyScopeFilter === "telecom" ? isTelecomScopeCenter(centerLabel) : isEngineeringCostCenter(centerLabel)
     })
-  }, [costCenterLookup, dailyScopeFilter, selectedDayRecords])
+  }, [costCenterLookup, dailyScopeFilter, isTelecomScopeCenter, selectedDayRecords])
 
   const selectedDayScopedResolvedRecords = useMemo(() => {
     return selectedDayScopedRecords.map((record) => {
@@ -932,63 +962,19 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
     return selectedDayCostCenters.reduce((total, center) => total + center.total, 0)
   }, [selectedDayCostCenters])
 
-  const selectedDayTelecomSpentByCode = useMemo(() => {
-    const totals = new Map<string, { total: number; centerLabel: string }>()
-
-    for (const record of selectedDayRecords) {
-      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
-      const resolved = resolveCostCenterRecord(driver, costCenterLookup)
-      const centerLabel = resolved?.centroCusto || ""
-
-      if (!isTelecomCostCenter(centerLabel)) continue
-
-      const centerCode = extractCostCenterCode(centerLabel)
-      if (!centerCode) continue
-
-      const current = totals.get(centerCode)
-      totals.set(centerCode, {
-        total: (current?.total ?? 0) + record.valor,
-        centerLabel: current?.centerLabel || centerLabel,
-      })
-    }
-
-    return totals
-  }, [costCenterLookup, selectedDayRecords])
+  const selectedDayTelecomSpentByCode = useMemo(
+    () => sumSpentByBudgetCenter(selectedDayRecords, costCenterLookup, resolveBudgetCenterCode, telecomBudgetCenterCodes),
+    [costCenterLookup, resolveBudgetCenterCode, selectedDayRecords, telecomBudgetCenterCodes],
+  )
 
   const telecomDailyBudgetRows = useMemo<TelecomDailyBudgetRow[]>(() => {
-    const budgetsByCode = new Map<string, FuelDailyBudgetItem>()
-
-    for (const item of dailyBudgetItems) {
-      budgetsByCode.set(item.centerCode, item)
-    }
-
-    const rows: TelecomDailyBudgetRow[] = []
-
-    for (const [centerCode, budget] of budgetsByCode.entries()) {
-      const spent = selectedDayTelecomSpentByCode.get(centerCode)?.total ?? 0
-      const centerLabel =
-        selectedDayTelecomSpentByCode.get(centerCode)?.centerLabel || registryLabelByCode.get(centerCode) || budget.centerLabel || centerCode
-      rows.push({
-        centerCode,
-        centerLabel,
-        budget: budget.dailyBudget,
-        spent,
-      })
-    }
-
-    for (const [centerCode, spentData] of selectedDayTelecomSpentByCode.entries()) {
-      if (budgetsByCode.has(centerCode)) continue
-
-      rows.push({
-        centerCode,
-        centerLabel: spentData.centerLabel || centerCode,
-        budget: 0,
-        spent: spentData.total,
-      })
-    }
-
-    return rows.sort((left, right) => Number(left.centerCode) - Number(right.centerCode))
-  }, [dailyBudgetItems, registryLabelByCode, selectedDayTelecomSpentByCode])
+    return telecomBudgetCenters.map((center) => ({
+      centerCode: center.centerCode,
+      centerLabel: center.centerLabel,
+      budget: Number(center.daily.toFixed(2)),
+      spent: selectedDayTelecomSpentByCode.get(center.centerCode) ?? 0,
+    }))
+  }, [selectedDayTelecomSpentByCode, telecomBudgetCenters])
 
   const telecomBudgetTotals = useMemo(() => {
     return telecomDailyBudgetRows.reduce(
@@ -1001,66 +987,6 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
     )
   }, [telecomDailyBudgetRows])
 
-  async function saveDailyBudget(centerCode: string, centerLabel: string, budgetValue: number) {
-    if (!Number.isFinite(budgetValue) || budgetValue < 0) {
-      toast({
-        title: "Orçamento inválido",
-        description: "Informe um valor diário maior ou igual a zero.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    setSavingBudgetCenterCode(centerCode)
-
-    try {
-      const res = await fetch(FUEL_DAILY_BUDGET_SWR_KEY, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          centerCode,
-          centerLabel,
-          dailyBudget: Number(budgetValue.toFixed(2)),
-        }),
-      })
-
-      const data = await res.json().catch(() => ({}))
-
-      if (!res.ok) {
-        throw new Error(data?.error || "Falha ao salvar orçamento diário.")
-      }
-
-      await mutateDailyBudgets()
-      toast({
-        title: "Orçamento diário salvo",
-        description: `${centerCode} atualizado para ${formatCompactCurrency(budgetValue)}.`,
-      })
-    } catch (error) {
-      toast({
-        title: "Erro ao salvar orçamento",
-        description: error instanceof Error ? error.message : "Não foi possível salvar no momento.",
-        variant: "destructive",
-      })
-    } finally {
-      setSavingBudgetCenterCode(null)
-    }
-  }
-
-  async function handleSaveBudgetRow(row: TelecomDailyBudgetRow) {
-    const rawDraft = budgetDrafts[row.centerCode]
-    const hasDraft = typeof rawDraft === "string"
-    const nextBudget = hasDraft ? parseBudgetInputValue(rawDraft) : row.budget
-    await saveDailyBudget(row.centerCode, row.centerLabel, nextBudget)
-
-    setBudgetDrafts((current) => {
-      const next = { ...current }
-      delete next[row.centerCode]
-      return next
-    })
-  }
-
   const activeDailyCenterKey = useMemo(() => {
     if (!selectedDailyCenterKey) return null
     return selectedDayCostCenters.some((center) => center.key === selectedDailyCenterKey) ? selectedDailyCenterKey : null
@@ -1072,7 +998,7 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
   }, [activeDailyCenterKey, selectedDayCostCenters])
 
   function getDailyCenterKeyByCode(centerCode: string): string | null {
-    const match = selectedDayCostCenters.find((center) => extractCostCenterCode(center.centroCusto) === centerCode)
+    const match = selectedDayCostCenters.find((center) => resolveBudgetCenterCode(center.centroCusto) === centerCode)
     return match?.key ?? null
   }
 
@@ -1128,9 +1054,9 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
       const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
       const resolved = resolveCostCenterRecord(driver, costCenterLookup)
       const centerLabel = resolved?.centroCusto || "Sem centro de custo"
-      return weeklyScopeFilter === "telecom" ? isTelecomCostCenter(centerLabel) : isEngineeringCostCenter(centerLabel)
+      return weeklyScopeFilter === "telecom" ? isTelecomScopeCenter(centerLabel) : isEngineeringCostCenter(centerLabel)
     })
-  }, [costCenterLookup, selectedWeekRecords, weeklyScopeFilter])
+  }, [costCenterLookup, isTelecomScopeCenter, selectedWeekRecords, weeklyScopeFilter])
 
   const selectedWeekScopedResolvedRecords = useMemo(() => {
     return selectedWeekScopedRecords.map((record) => {
@@ -1183,82 +1109,29 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
         total: item.total,
         transactions: item.transactions,
         drivers: item.drivers.size,
-        telecom: isTelecomCostCenter(item.centroCusto),
+        telecom: isTelecomScopeCenter(item.centroCusto),
         engineering: isEngineeringCostCenter(item.centroCusto),
       }))
       .sort((left, right) => right.total - left.total)
-  }, [selectedWeekScopedResolvedRecords])
+  }, [isTelecomScopeCenter, selectedWeekScopedResolvedRecords])
 
   const selectedWeekCostCentersTotal = useMemo(() => {
     return selectedWeekCostCenters.reduce((total, center) => total + center.total, 0)
   }, [selectedWeekCostCenters])
 
-  const daysInSelectedWeek = useMemo(() => {
-    if (!selectedWeekRange) return 7
-
-    const diffDays =
-      Math.round((startOfDay(selectedWeekRange.end).getTime() - startOfDay(selectedWeekRange.start).getTime()) / (24 * 60 * 60 * 1000)) + 1
-
-    return diffDays > 0 ? diffDays : 7
-  }, [selectedWeekRange])
-
-  const selectedWeekTelecomSpentByCode = useMemo(() => {
-    const totals = new Map<string, { total: number; centerLabel: string }>()
-
-    for (const record of selectedWeekRecords) {
-      const driver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
-      const resolved = resolveCostCenterRecord(driver, costCenterLookup)
-      const centerLabel = resolved?.centroCusto || ""
-
-      if (!isTelecomCostCenter(centerLabel)) continue
-
-      const centerCode = extractCostCenterCode(centerLabel)
-      if (!centerCode) continue
-
-      const current = totals.get(centerCode)
-      totals.set(centerCode, {
-        total: (current?.total ?? 0) + record.valor,
-        centerLabel: current?.centerLabel || centerLabel,
-      })
-    }
-
-    return totals
-  }, [costCenterLookup, selectedWeekRecords])
+  const selectedWeekTelecomSpentByCode = useMemo(
+    () => sumSpentByBudgetCenter(selectedWeekRecords, costCenterLookup, resolveBudgetCenterCode, telecomBudgetCenterCodes),
+    [costCenterLookup, resolveBudgetCenterCode, selectedWeekRecords, telecomBudgetCenterCodes],
+  )
 
   const telecomWeeklyBudgetRows = useMemo<TelecomDailyBudgetRow[]>(() => {
-    const budgetsByCode = new Map<string, FuelDailyBudgetItem>()
-
-    for (const item of dailyBudgetItems) {
-      budgetsByCode.set(item.centerCode, item)
-    }
-
-    const rows: TelecomDailyBudgetRow[] = []
-
-    for (const [centerCode, budget] of budgetsByCode.entries()) {
-      const spent = selectedWeekTelecomSpentByCode.get(centerCode)?.total ?? 0
-      const centerLabel =
-        selectedWeekTelecomSpentByCode.get(centerCode)?.centerLabel || registryLabelByCode.get(centerCode) || budget.centerLabel || centerCode
-      rows.push({
-        centerCode,
-        centerLabel,
-        budget: Number((budget.dailyBudget * daysInSelectedWeek).toFixed(2)),
-        spent,
-      })
-    }
-
-    for (const [centerCode, spentData] of selectedWeekTelecomSpentByCode.entries()) {
-      if (budgetsByCode.has(centerCode)) continue
-
-      rows.push({
-        centerCode,
-        centerLabel: spentData.centerLabel || centerCode,
-        budget: 0,
-        spent: spentData.total,
-      })
-    }
-
-    return rows.sort((left, right) => Number(left.centerCode) - Number(right.centerCode))
-  }, [dailyBudgetItems, daysInSelectedWeek, registryLabelByCode, selectedWeekTelecomSpentByCode])
+    return telecomBudgetCenters.map((center) => ({
+      centerCode: center.centerCode,
+      centerLabel: center.centerLabel,
+      budget: Number(center.weekly.toFixed(2)),
+      spent: selectedWeekTelecomSpentByCode.get(center.centerCode) ?? 0,
+    }))
+  }, [selectedWeekTelecomSpentByCode, telecomBudgetCenters])
 
   const telecomWeeklyBudgetTotals = useMemo(() => {
     return telecomWeeklyBudgetRows.reduce(
@@ -1272,7 +1145,7 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
   }, [telecomWeeklyBudgetRows])
 
   function getWeeklyCenterKeyByCode(centerCode: string): string | null {
-    const match = selectedWeekCostCenters.find((center) => extractCostCenterCode(center.centroCusto) === centerCode)
+    const match = selectedWeekCostCenters.find((center) => resolveBudgetCenterCode(center.centroCusto) === centerCode)
     return match?.key ?? null
   }
 
@@ -2135,34 +2008,30 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
                       >
                         {formatCurrency(telecomBudgetTotals.spent)} / {formatCurrency(telecomBudgetTotals.budget)}
                       </Badge>
-                      {isMaster ? (
+                      {onManageBudget ? (
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
                           className="h-7 border-[#cdddc3] px-2 text-[11px]"
                           onClick={() => {
-                            setIsBudgetEditMode((current) => {
-                              if (current) {
-                                setBudgetDrafts({})
-                              }
-
-                              return !current
-                            })
+                            setIsDailyDetailOpen(false)
+                            onManageBudget()
                           }}
                         >
-                          {isBudgetEditMode ? "Concluir" : "Editar"}
+                          {isMaster ? "Editar orçamento" : "Ver orçamento"}
                         </Button>
                       ) : null}
                     </div>
                   </div>
+                  <p className="px-4 pt-1 text-[10px] text-slate-500">Orçado diário da aba Orçamento (soma das diárias dos colaboradores ativos).</p>
 
                   <div className="mt-3 flex-1 overflow-auto px-4 pb-3">
-                    {isDailyBudgetLoading ? <p className="text-xs text-slate-500">Carregando limites diários...</p> : null}
-                    {!isDailyBudgetLoading && telecomDailyBudgetRows.length === 0 ? (
-                      <p className="text-xs text-slate-500">Nenhum centro telecom configurado para orçamento diário.</p>
+                    {!hasBudgetPlanLoaded ? <p className="text-xs text-slate-500">Carregando orçamento...</p> : null}
+                    {hasBudgetPlanLoaded && telecomDailyBudgetRows.length === 0 ? (
+                      <p className="text-xs text-slate-500">Nenhum centro no grupo Telecom da aba Orçamento.</p>
                     ) : null}
-                    {!isDailyBudgetLoading && telecomDailyBudgetRows.length > 0 ? (
+                    {hasBudgetPlanLoaded && telecomDailyBudgetRows.length > 0 ? (
                       <div className="overflow-hidden rounded-xl border border-[#e4ece0] bg-white shadow-sm shadow-[#eff4eb]/50">
                         <Table>
                           <TableHeader>
@@ -2171,17 +2040,12 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
                               <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Orçado</TableHead>
                               <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Gasto</TableHead>
                               <TableHead className="text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Variação</TableHead>
-                              {isMaster && isBudgetEditMode ? (
-                                <TableHead className="w-[72px] text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Ação</TableHead>
-                              ) : null}
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {telecomDailyBudgetRows.map((row) => {
                               const variance = row.spent - row.budget
                               const isOverBudget = row.spent > row.budget
-                              const draftValue = budgetDrafts[row.centerCode]
-                              const draftBudget = typeof draftValue === "string" ? parseBudgetInputValue(draftValue) : row.budget
                               const matchingCenterKey = getDailyCenterKeyByCode(row.centerCode)
                               const isSelected = matchingCenterKey !== null && activeDailyCenterKey === matchingCenterKey
 
@@ -2206,20 +2070,7 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
                                     </button>
                                   </TableCell>
                                   <TableCell>
-                                    {isMaster && isBudgetEditMode ? (
-                                      <Input
-                                        value={draftValue ?? String(row.budget).replace(".", ",")}
-                                        onChange={(event) =>
-                                          setBudgetDrafts((current) => ({
-                                            ...current,
-                                            [row.centerCode]: event.target.value,
-                                          }))
-                                        }
-                                        className="h-8 w-24 bg-white text-xs"
-                                      />
-                                    ) : (
-                                      <span className="text-sm font-semibold text-slate-900">{formatCurrency(row.budget)}</span>
-                                    )}
+                                    <span className="text-sm font-semibold text-slate-900">{formatCurrency(row.budget)}</span>
                                   </TableCell>
                                   <TableCell>
                                     <span className="text-sm font-semibold text-slate-900">{formatCurrency(row.spent)}</span>
@@ -2235,19 +2086,6 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
                                       {getBudgetVarianceLabel(variance)}
                                     </span>
                                   </TableCell>
-                                  {isMaster && isBudgetEditMode ? (
-                                    <TableCell className="text-right">
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        className="h-8 px-2 text-[11px]"
-                                        disabled={savingBudgetCenterCode === row.centerCode || !Number.isFinite(draftBudget) || draftBudget < 0}
-                                        onClick={() => void handleSaveBudgetRow(row)}
-                                      >
-                                        Salvar
-                                      </Button>
-                                    </TableCell>
-                                  ) : null}
                                 </TableRow>
                               )
                             })}
@@ -2476,11 +2314,11 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
                           {formatCurrency(telecomWeeklyBudgetTotals.spent)} / {formatCurrency(telecomWeeklyBudgetTotals.budget)}
                         </Badge>
                       </div>
-                      <p className="px-4 pt-1 text-[10px] text-slate-500">Orçamento diário x {daysInSelectedWeek} dias da semana selecionada.</p>
+                      <p className="px-4 pt-1 text-[10px] text-slate-500">Orçado semanal da aba Orçamento (diária × dias trabalhados de cada colaborador).</p>
 
                       <div className="mt-3 flex-1 overflow-auto px-4 pb-3">
                         {telecomWeeklyBudgetRows.length === 0 ? (
-                          <p className="text-xs text-slate-500">Nenhum centro telecom configurado para orçamento diário.</p>
+                          <p className="text-xs text-slate-500">Nenhum centro no grupo Telecom da aba Orçamento.</p>
                         ) : (
                           <div className="overflow-hidden rounded-xl border border-[#e4ece0] bg-white shadow-sm shadow-[#eff4eb]/50">
                             <Table>

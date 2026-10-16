@@ -1,10 +1,13 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Building2, CreditCard, Download, Edit, Eye, FileSearch, MoreHorizontal, Trash2, UserPlus, UserMinus } from "lucide-react"
+import { Building2, CalendarClock, CreditCard, Download, Edit, Eye, FileSearch, Loader2, MoreHorizontal, Trash2, UserPlus, UserMinus } from "lucide-react"
 import { VehicleDetailsDialog } from "@/components/fleet/vehicle-details-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,7 +23,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { getVehicleReviewMilestone, isVehicleDueForReview } from "@/lib/fleet-maintenance"
+import {
+  formatReviewSchedule,
+  fromReviewScheduleInputValue,
+  getVehicleReviewMilestone,
+  isReviewSchedulePast,
+  isVehicleDueForReview,
+  toReviewScheduleInputValue,
+} from "@/lib/fleet-maintenance"
 import { getVehicleVisual } from "@/lib/vehicle-icons"
 import type { VehicleCardPlate } from "@/lib/driver-links-shared"
 import type { Vehicle, Colaborador, DriveFile } from "@/lib/types"
@@ -34,6 +44,7 @@ interface VehiclesTableProps {
   onDelete: (id: string) => void
   onAssign: (vehicle: Vehicle) => void
   onUnassign: (vehicle: Vehicle) => void
+  onScheduleReview?: (vehicle: Vehicle, revisaoAgendadaEm: string | null) => Promise<boolean>
 }
 
 function formatDate(dateString: string): string {
@@ -136,12 +147,25 @@ function findTermoDocumento(colaborador: Colaborador): DriveFile | null {
   return matches.length > 0 ? matches[matches.length - 1] : null
 }
 
-export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardPlatesByVehicleId, onEdit, onDelete, onAssign, onUnassign }: VehiclesTableProps) {
+export function VehiclesTable({
+  vehicles,
+  colaboradores,
+  canManage = true,
+  cardPlatesByVehicleId,
+  onEdit,
+  onDelete,
+  onAssign,
+  onUnassign,
+  onScheduleReview,
+}: VehiclesTableProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const stickyScrollbarRef = useRef<HTMLDivElement | null>(null)
   const [stickyScrollWidth, setStickyScrollWidth] = useState(0)
   const [showStickyScrollbar, setShowStickyScrollbar] = useState(false)
   const [detailsVehicleId, setDetailsVehicleId] = useState<string | null>(null)
+  const [scheduleVehicleId, setScheduleVehicleId] = useState<string | null>(null)
+  const scheduleVehicle = scheduleVehicleId ? vehicles.find((item) => item.id === scheduleVehicleId) ?? null : null
+  const canScheduleReview = canManage && Boolean(onScheduleReview)
   const detailsVehicle = detailsVehicleId ? vehicles.find((item) => item.id === detailsVehicleId) ?? null : null
   const detailsCardPlate = detailsVehicle
     ? detailsVehicle.placaCartaoCombustivel || cardPlatesByVehicleId?.get(detailsVehicle.id)?.cardPlate || ""
@@ -257,6 +281,9 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
             const rowHighlightClass = getRowHighlightClass(expired, expiring, index)
             const reviewMilestone = getVehicleReviewMilestone(vehicle)
             const dueForReview = isVehicleDueForReview(vehicle)
+            const reviewSchedule = formatReviewSchedule(vehicle.revisaoAgendadaEm)
+            const [reviewScheduleDate, reviewScheduleTime] = reviewSchedule ? reviewSchedule.split(" às ") : [null, null]
+            const reviewSchedulePast = isReviewSchedulePast(vehicle.revisaoAgendadaEm)
             const vehicleVisual = getVehicleVisual(vehicle.modelo)
             const VehicleIcon = vehicleVisual.icon
             const stickyActionClass = expired
@@ -371,6 +398,23 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
                       )
                     )}
                   </div>
+                  {reviewSchedule ? (
+                    <button
+                      type="button"
+                      disabled={!canScheduleReview}
+                      onClick={() => setScheduleVehicleId(vehicle.id)}
+                      title={reviewSchedulePast ? `Revisão agendada para ${reviewSchedule} (data já passou)` : `Revisão agendada para ${reviewSchedule}`}
+                      className={`mx-auto mt-1 flex flex-col items-center rounded-md px-1.5 py-0.5 text-[0.7rem] leading-tight enabled:hover:bg-rose-50 disabled:cursor-default ${
+                        reviewSchedulePast ? "text-slate-400" : "text-rose-700"
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1 font-semibold">
+                        <CalendarClock className="h-3 w-3" />
+                        {reviewScheduleDate}
+                      </span>
+                      <span className="font-medium">às {reviewScheduleTime}</span>
+                    </button>
+                  ) : null}
                 </TableCell>
                 <TableCell className="align-middle text-center">
                   {vehicle.semParar ? (
@@ -504,6 +548,12 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
                           <Edit className="mr-2 h-4 w-4 text-sky-600" />
                           Editar
                         </DropdownMenuItem>
+                        {canScheduleReview ? (
+                          <DropdownMenuItem onClick={() => setScheduleVehicleId(vehicle.id)}>
+                            <CalendarClock className="mr-2 h-4 w-4 text-rose-600" />
+                            {vehicle.revisaoAgendadaEm ? "Alterar agendamento da revisão" : "Agendar revisão"}
+                          </DropdownMenuItem>
+                        ) : null}
                         <DropdownMenuSeparator />
                         {vehicle.colaboradorId ? (
                           <DropdownMenuItem onClick={() => onUnassign(vehicle)}>
@@ -555,6 +605,84 @@ export function VehiclesTable({ vehicles, colaboradores, canManage = true, cardP
           if (!open) setDetailsVehicleId(null)
         }}
       />
+      {canScheduleReview && onScheduleReview ? (
+        <ReviewScheduleDialog
+          key={scheduleVehicle?.id ?? "closed"}
+          vehicle={scheduleVehicle}
+          onOpenChange={(open) => {
+            if (!open) setScheduleVehicleId(null)
+          }}
+          onSave={async (revisaoAgendadaEm) => {
+            if (!scheduleVehicle) return
+            const saved = await onScheduleReview(scheduleVehicle, revisaoAgendadaEm)
+            if (saved) setScheduleVehicleId(null)
+          }}
+        />
+      ) : null}
     </div>
+  )
+}
+
+function ReviewScheduleDialog({
+  vehicle,
+  onOpenChange,
+  onSave,
+}: {
+  vehicle: Vehicle | null
+  onOpenChange: (open: boolean) => void
+  onSave: (revisaoAgendadaEm: string | null) => Promise<void>
+}) {
+  const [value, setValue] = useState(() => toReviewScheduleInputValue(vehicle?.revisaoAgendadaEm))
+  const [saving, setSaving] = useState(false)
+  const currentSchedule = formatReviewSchedule(vehicle?.revisaoAgendadaEm)
+
+  const save = async (next: string | null) => {
+    setSaving(true)
+    try {
+      await onSave(next)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={vehicle !== null} onOpenChange={(open) => !saving && onOpenChange(open)}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>Agendar revisão</DialogTitle>
+          <DialogDescription>
+            Veículo <span className="font-semibold text-foreground">{vehicle?.placa}</span>
+            {vehicle?.modelo ? ` — ${vehicle.modelo}` : ""}. A data e hora aparecem abaixo do status na lista da frota.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5 py-1">
+          <Label htmlFor="review-schedule-input">Data e hora da revisão</Label>
+          <Input id="review-schedule-input" type="datetime-local" value={value} onChange={(event) => setValue(event.target.value)} />
+          {currentSchedule ? <p className="text-xs text-muted-foreground">Agendamento atual: {currentSchedule}</p> : null}
+        </div>
+        <DialogFooter className="gap-2 sm:justify-between">
+          {vehicle?.revisaoAgendadaEm ? (
+            <Button type="button" variant="ghost" className="text-destructive hover:text-destructive" disabled={saving} onClick={() => void save(null)}>
+              Remover agendamento
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={saving || !fromReviewScheduleInputValue(value)}
+              onClick={() => void save(fromReviewScheduleInputValue(value))}
+            >
+              {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <CalendarClock className="mr-1.5 h-4 w-4" />}
+              Salvar agendamento
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

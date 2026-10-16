@@ -36,6 +36,7 @@ type VehicleRow = {
   frota: boolean | null
   na_oficina: boolean | null
   para_revisao: boolean | null
+  revisao_agendada_em?: string | null
   sem_parar: boolean | null
   tipo_contratacao: string | null
   cpf_agregado: string | null
@@ -75,6 +76,7 @@ const mapVehicleRow = (row: VehicleRow): Vehicle => {
     frota: row.frota ?? true,
     naOficina: row.na_oficina ?? false,
     paraRevisao: row.para_revisao ?? false,
+    revisaoAgendadaEm: row.revisao_agendada_em || null,
     semParar: row.sem_parar ?? false,
     tipoContratacao: row.tipo_contratacao || null,
     cpfAgregado: row.cpf_agregado || null,
@@ -104,9 +106,22 @@ const hasMissingColumnError = (error: unknown): boolean => {
   return message.includes("could not find the") || message.includes("column")
 }
 
+export const REVIEW_SCHEDULE_MIGRATION_MESSAGE =
+  "O agendamento de revisão ainda não está habilitado no banco. Execute o script scripts/027_add_vehicle_review_schedule.sql no Supabase."
+
+const isMissingReviewScheduleColumn = (message: string | undefined): boolean =>
+  Boolean(message && message.toLowerCase().includes("revisao_agendada_em"))
+
+const withoutReviewSchedule = <T extends Partial<VehiclePayload>>(payload: T): T => {
+  const copy = { ...payload }
+  delete copy.revisao_agendada_em
+  return copy
+}
+
 const toLegacyCompatibleVehicleRow = (formData: VehicleFormData) => {
   const payload = { ...toVehicleRow(formData, false) } as Partial<VehiclePayload>
   delete payload.km_ultima_revisao
+  delete payload.revisao_agendada_em
   return payload
 }
 
@@ -188,6 +203,8 @@ const toVehicleRow = (formData: VehicleFormData, includeExtendedAgregadoFields =
     frota: formData.frota,
     na_oficina: formData.naOficina,
     para_revisao: formData.paraRevisao,
+    // undefined = campo nao veio no formulario (ex.: agregados); nao sobrescreve o agendamento salvo.
+    revisao_agendada_em: formData.revisaoAgendadaEm === undefined ? undefined : formData.revisaoAgendadaEm || null,
     sem_parar: formData.semParar,
     tipo_contratacao: formData.tipoContratacao ?? null,
     cpf_agregado: cpfAgregado,
@@ -298,11 +315,22 @@ export function useVehicles(enabled = true) {
     let insertError: Error | null = null
     let usedReviewKmFallback = false
 
-    const primaryResult = await supabase
+    let reviewScheduleUnavailable = false
+
+    let primaryResult = await supabase
       .from(TABLE)
       .insert(payload)
       .select("*")
       .single()
+
+    if (primaryResult.error && isMissingReviewScheduleColumn(primaryResult.error.message)) {
+      reviewScheduleUnavailable = true
+      primaryResult = await supabase
+        .from(TABLE)
+        .insert(withoutReviewSchedule(payload))
+        .select("*")
+        .single()
+    }
 
     if (primaryResult.error) {
       if (hasMissingColumnError(new Error(primaryResult.error.message))) {
@@ -333,6 +361,9 @@ export function useVehicles(enabled = true) {
       clearReviewKmFallbackValue(vehicle.id)
     }
     mutate(SWR_KEY)
+    if (reviewScheduleUnavailable && formData.revisaoAgendadaEm) {
+      throw new Error(`Veículo salvo, mas sem o agendamento. ${REVIEW_SCHEDULE_MIGRATION_MESSAGE}`)
+    }
     return usedReviewKmFallback
       ? mergeVehicleWithReviewKm(vehicle, formData.kmUltimaRevisao ?? null)
       : vehicle
@@ -349,12 +380,24 @@ export function useVehicles(enabled = true) {
     let updateError: Error | null = null
     let usedReviewKmFallback = false
 
-    const primaryResult = await supabase
+    let reviewScheduleUnavailable = false
+
+    let primaryResult = await supabase
       .from(TABLE)
       .update(payload)
       .eq("id", id)
       .select("*")
       .single()
+
+    if (primaryResult.error && isMissingReviewScheduleColumn(primaryResult.error.message)) {
+      reviewScheduleUnavailable = true
+      primaryResult = await supabase
+        .from(TABLE)
+        .update(withoutReviewSchedule(payload))
+        .eq("id", id)
+        .select("*")
+        .single()
+    }
 
     if (primaryResult.error) {
       if (hasMissingColumnError(new Error(primaryResult.error.message))) {
@@ -389,9 +432,27 @@ export function useVehicles(enabled = true) {
       clearReviewKmFallbackValue(vehicle.id)
     }
     mutate(SWR_KEY)
+    if (reviewScheduleUnavailable && formData.revisaoAgendadaEm) {
+      throw new Error(`Veículo salvo, mas sem o agendamento. ${REVIEW_SCHEDULE_MIGRATION_MESSAGE}`)
+    }
     return usedReviewKmFallback
       ? mergeVehicleWithReviewKm(vehicle, formData.kmUltimaRevisao ?? null)
       : vehicle
+  }
+
+  /** Agenda (ou remove, com null) a data/hora da revisao sem mexer nos demais campos do veiculo. */
+  const scheduleVehicleReview = async (id: string, revisaoAgendadaEm: string | null): Promise<void> => {
+    const supabase = createClient()
+    const { error: scheduleError } = await supabase
+      .from(TABLE)
+      .update({ revisao_agendada_em: revisaoAgendadaEm, updated_at: new Date().toISOString() })
+      .eq("id", id)
+
+    if (scheduleError) {
+      throw new Error(isMissingReviewScheduleColumn(scheduleError.message) ? REVIEW_SCHEDULE_MIGRATION_MESSAGE : scheduleError.message)
+    }
+
+    await mutate(SWR_KEY)
   }
 
   const deleteVehicle = async (id: string): Promise<boolean> => {
@@ -418,6 +479,7 @@ export function useVehicles(enabled = true) {
     error,
     addVehicle,
     updateVehicle,
+    scheduleVehicleReview,
     deleteVehicle,
     getVehicleById,
     refreshVehicles,

@@ -51,7 +51,7 @@ import { useMultas } from "@/hooks/use-multas"
 import { useOrdensServico } from "@/hooks/use-ordens-servico"
 import { describeVencimento, getParcelasEmAlerta } from "@/lib/fornecedores"
 import { mapVehicleCardPlates } from "@/lib/driver-links-shared"
-import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
+import { formatReviewSchedule, isVehicleDueForReview } from "@/lib/fleet-maintenance"
 import { isAgregadoVehicle, isVisibleInFrotaSection } from "@/lib/vehicle-classification"
 import type { Vehicle, VehicleFormData, VehicleFilters, Colaborador, ColaboradorFormData } from "@/lib/types"
 
@@ -193,7 +193,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
   const shouldLoadColaboradores = !isLightweightSection
   const shouldLoadMultas = resolvedInitialSection === "overview"
   const monthlyFuelTotal = fuelData?.monthlyTotal ?? 0
-  const { vehicles, addVehicle, updateVehicle, deleteVehicle, refreshVehicles } = useVehicles(shouldLoadVehicles)
+  const { vehicles, addVehicle, updateVehicle, scheduleVehicleReview, deleteVehicle, refreshVehicles } = useVehicles(shouldLoadVehicles)
   const {
     colaboradores,
     addColaborador,
@@ -535,6 +535,26 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
         description: error instanceof Error ? error.message : "Falha ao salvar veículo.",
         variant: "destructive",
       })
+    }
+  }
+
+  const handleScheduleVehicleReview = async (vehicle: Vehicle, revisaoAgendadaEm: string | null): Promise<boolean> => {
+    try {
+      await scheduleVehicleReview(vehicle.id, revisaoAgendadaEm)
+      toast({
+        title: revisaoAgendadaEm ? "Revisão agendada" : "Agendamento removido",
+        description: revisaoAgendadaEm
+          ? `${vehicle.placa}: revisão em ${formatReviewSchedule(revisaoAgendadaEm)}.`
+          : `${vehicle.placa}: agendamento da revisão removido.`,
+      })
+      return true
+    } catch (error) {
+      toast({
+        title: "Erro ao agendar revisão",
+        description: error instanceof Error ? error.message : "Não foi possível salvar o agendamento.",
+        variant: "destructive",
+      })
+      return false
     }
   }
 
@@ -935,6 +955,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
             onDelete={handleDeleteVehicleClick}
             onAssign={handleAssignVehicle}
             onUnassign={handleUnassignVehicle}
+            onScheduleReview={handleScheduleVehicleReview}
           />
         </div>
       )

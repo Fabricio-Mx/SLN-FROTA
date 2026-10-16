@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/hooks/use-toast"
-import { getNextReviewKm } from "@/lib/fleet-maintenance"
+import { fromReviewScheduleInputValue, getNextReviewKm, toReviewScheduleInputValue } from "@/lib/fleet-maintenance"
 import type { Vehicle, VehicleFormData } from "@/lib/types"
 
 const FORNECEDORES_PROPRIO = [
@@ -56,6 +56,7 @@ const initialFormData: VehicleFormData = {
   frota: true,
   naOficina: false,
   paraRevisao: false,
+  revisaoAgendadaEm: null,
   semParar: false,
   tipoContratacao: null,
   colaboradorId: null,
@@ -100,6 +101,7 @@ export function VehicleModal({
         frota: vehicle.frota ?? true,
         naOficina: vehicle.naOficina ?? false,
         paraRevisao: vehicle.paraRevisao ?? false,
+        revisaoAgendadaEm: vehicle.revisaoAgendadaEm ?? null,
         semParar: vehicle.semParar ?? false,
         tipoContratacao: vehicle.tipoContratacao || null,
         colaboradorId: vehicle.colaboradorId || null,
@@ -609,6 +611,32 @@ export function VehicleModal({
                     Sem Parar
                   </Label>
                 </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,240px)_auto] sm:items-end">
+                <div className="space-y-1.5">
+                  <Label htmlFor="revisaoAgendadaEm" className="text-sm font-medium">
+                    Revisão agendada para
+                  </Label>
+                  <Input
+                    id="revisaoAgendadaEm"
+                    type="datetime-local"
+                    value={toReviewScheduleInputValue(formData.revisaoAgendadaEm)}
+                    onChange={(event) =>
+                      setFormData({ ...formData, revisaoAgendadaEm: fromReviewScheduleInputValue(event.target.value) })
+                    }
+                  />
+                </div>
+                {formData.revisaoAgendadaEm ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="justify-self-start text-muted-foreground"
+                    onClick={() => setFormData({ ...formData, revisaoAgendadaEm: null })}
+                  >
+                    Remover agendamento
+                  </Button>
+                ) : null}
               </div>
               <p className="text-xs text-muted-foreground">
                 Se desmarcar &quot;Frota&quot;, o veículo continua visível em &quot;Veículos Frota&quot; como disponível, mas sai da contagem da frota e não vai para agregados.
