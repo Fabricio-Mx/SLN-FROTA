@@ -1,9 +1,11 @@
 "use client"
 
 import { memo, useDeferredValue, useMemo, useState } from "react"
+import useSWR from "swr"
 import { RotateCcw } from "lucide-react"
 import { getCostCenterBaseKey, preferCostCenterLabel, resolveCostCenterRecord } from "@/lib/cost-center-shared"
 import { useFuelCostCenters } from "@/hooks/use-fuel-cost-centers"
+import { fuelFetcher, FUEL_DATA_SWR_KEY, type FuelResponse } from "@/hooks/use-fuel-data"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
@@ -36,6 +38,18 @@ function toDateOnly(value: string): Date | null {
   return new Date(year, month - 1, day)
 }
 
+const SEARCH_WINDOW_DAYS = 30
+
+function toDateParam(date: Date): string {
+  const month = `${date.getMonth() + 1}`.padStart(2, "0")
+  const day = `${date.getDate()}`.padStart(2, "0")
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+function formatShortDate(date: Date): string {
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(date)
+}
+
 function toMinutes(value: string): number | null {
   if (!value) return null
   const [hours, minutes] = value.split(":").map(Number)
@@ -44,7 +58,11 @@ function toMinutes(value: string): number | null {
 }
 
 function normalizeSearchValue(value: string): string {
-  return value.toLowerCase().trim()
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
 }
 
 function normalizeDigits(value: string): string {
@@ -68,7 +86,7 @@ type IndexedFuelRecord = {
   parsedDate: Date
   normalizedPlate: string
   normalizedCpf: string
-  normalizedDriverName: string
+  searchText: string
 }
 
 const FuelTransactionsRows = memo(function FuelTransactionsRows({
@@ -118,29 +136,84 @@ export function FuelTransactionsTable() {
   const [toTime, setToTime] = useState("")
   const deferredSearch = useDeferredValue(search)
 
+  const hasSearch = deferredSearch.trim().length > 0
+  const hasDateFilter = !!fromDate || !!toDate
+  // Busca e filtro de datas consultam o histórico, não apenas a competência carregada.
+  const usesFullHistory = hasSearch || hasDateFilter
+
+  // Sem datas informadas, a busca por texto fica limitada aos últimos 30 dias para não gerar listas muito grandes.
+  const historyRange = useMemo(() => {
+    if (!usesFullHistory) return null
+
+    if (!hasDateFilter) {
+      const end = new Date()
+      const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - SEARCH_WINDOW_DAYS)
+      return { start, end, isSearchWindow: true }
+    }
+
+    if (availableMonths.length === 0) return null
+
+    const monthKeys = availableMonths.map((month) => month.month).sort()
+    const [firstYear, firstMonth] = monthKeys[0].split("-").map(Number)
+    const [lastYear, lastMonth] = monthKeys[monthKeys.length - 1].split("-").map(Number)
+    if (!firstYear || !firstMonth || !lastYear || !lastMonth) return null
+
+    const today = new Date()
+    const lastMonthEnd = new Date(lastYear, lastMonth, 0)
+    return {
+      start: toDateOnly(fromDate) ?? new Date(firstYear, firstMonth - 1, 1),
+      end: toDateOnly(toDate) ?? (lastMonthEnd > today ? lastMonthEnd : today),
+      isSearchWindow: false,
+    }
+  }, [availableMonths, fromDate, hasDateFilter, toDate, usesFullHistory])
+
+  const historyKey = useMemo(() => {
+    if (!historyRange) return null
+
+    const params = new URLSearchParams({
+      start: toDateParam(historyRange.start),
+      end: toDateParam(historyRange.end),
+      dateField: "transaction",
+    })
+
+    return `${FUEL_DATA_SWR_KEY}?${params.toString()}`
+  }, [historyRange])
+
+  const { data: historyData, isLoading: isHistoryLoading } = useSWR<FuelResponse>(historyKey, fuelFetcher, {
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+    dedupingInterval: 60_000,
+    keepPreviousData: true,
+  })
+
+  const isSearchingHistory = usesFullHistory && !!historyData?.records
+  const sourceRecords = isSearchingHistory ? historyData.records : records
+
   const indexedRecords = useMemo<IndexedFuelRecord[]>(() => {
-    return records
+    return sourceRecords
       .map((record) => {
         const parsedDate = parseFuelDateTime(record.dateTime)
         const matchedCostCenter = resolveCostCenterRecord(record.nomeMotorista, lookup)
+        const centroCusto = matchedCostCenter?.centroCusto ?? ""
+        const supervisorName = matchedCostCenter?.supervisor ?? ""
+        const coordenador = matchedCostCenter?.coordenador ?? ""
 
         return {
           ...record,
-          centroCusto: matchedCostCenter?.centroCusto ?? "",
-          supervisor: matchedCostCenter?.supervisor ?? "",
-          coordenador: matchedCostCenter?.coordenador ?? "",
+          centroCusto,
+          supervisor: supervisorName,
+          coordenador,
           parsedDate,
           normalizedPlate: normalizePlate(record.cardPlate),
           normalizedCpf: normalizeDigits(record.cpfMotorista),
-          normalizedDriverName: normalizeSearchValue(record.nomeMotorista),
+          searchText: normalizeSearchValue(
+            [record.nomeMotorista, record.cardPlate, record.cpfMotorista, record.tipoCombustivel, centroCusto, supervisorName, coordenador].join(" ")
+          ),
         }
       })
       .filter((record) => !Number.isNaN(record.parsedDate.getTime()))
-  }, [records, lookup])
-
-  const matchedCount = useMemo(() => {
-    return indexedRecords.filter((record) => record.centroCusto || record.supervisor || record.coordenador).length
-  }, [indexedRecords])
+      .sort((left, right) => right.parsedDate.getTime() - left.parsedDate.getTime())
+  }, [sourceRecords, lookup])
 
   const costCenterOptions = useMemo(() => {
     const optionsByKey = new Map<string, string>()
@@ -161,10 +234,9 @@ export function FuelTransactionsTable() {
   }, [indexedRecords])
 
   const filtered = useMemo(() => {
-    const searchTerm = normalizeSearchValue(deferredSearch)
-    const searchDigits = normalizeDigits(searchTerm)
-    const searchPlate = normalizePlate(searchTerm)
-    const start = toDateOnly(fromDate)
+    const searchTokens = normalizeSearchValue(deferredSearch).split(/\s+/).filter(Boolean)
+    const costCenterKey = costCenter !== "todos" ? getCostCenterBaseKey(costCenter) : null
+    const start = toDateOnly(fromDate) ?? (historyRange?.isSearchWindow ? historyRange.start : null)
     const end = toDateOnly(toDate)
     const startMinutes = toMinutes(fromTime)
     const endMinutes = toMinutes(toTime)
@@ -173,12 +245,16 @@ export function FuelTransactionsTable() {
     }
 
     return indexedRecords.filter((record) => {
-      if (searchTerm) {
-        const matchesDriverName = record.normalizedDriverName.includes(searchTerm)
-        const matchesCpf = searchDigits.length > 0 && record.normalizedCpf.includes(searchDigits)
-        const matchesPlate = searchPlate.length > 0 && record.normalizedPlate.includes(searchPlate)
+      if (searchTokens.length > 0) {
+        const matchesAllTokens = searchTokens.every((token) => {
+          if (record.searchText.includes(token)) return true
+          const tokenDigits = normalizeDigits(token)
+          if (tokenDigits.length > 0 && record.normalizedCpf.includes(tokenDigits)) return true
+          const tokenPlate = normalizePlate(token)
+          return tokenPlate.length > 0 && record.normalizedPlate.includes(tokenPlate)
+        })
 
-        if (!matchesDriverName && !matchesCpf && !matchesPlate) return false
+        if (!matchesAllTokens) return false
       }
 
       if (fuelType !== "todos") {
@@ -189,7 +265,7 @@ export function FuelTransactionsTable() {
         if (fuelType === "gnv" && !normalized.includes("gnv")) return false
       }
 
-      if (costCenter !== "todos" && record.centroCusto !== costCenter) return false
+      if (costCenterKey && getCostCenterBaseKey(record.centroCusto) !== costCenterKey) return false
       if (supervisor !== "todos" && record.supervisor !== supervisor) return false
       if (matchStatus === "com-centro" && !record.centroCusto) return false
       if (matchStatus === "sem-centro" && record.centroCusto) return false
@@ -205,7 +281,11 @@ export function FuelTransactionsTable() {
 
       return true
     })
-  }, [indexedRecords, deferredSearch, fuelType, costCenter, supervisor, matchStatus, fromDate, toDate, fromTime, toTime])
+  }, [indexedRecords, deferredSearch, fuelType, costCenter, supervisor, matchStatus, fromDate, toDate, fromTime, toTime, historyRange])
+
+  const matchedCount = useMemo(() => {
+    return filtered.filter((record) => record.centroCusto || record.supervisor || record.coordenador).length
+  }, [filtered])
 
   const selectedMonthOption = useMemo(() => {
     return availableMonths.find((month) => month.month === selectedMonth) ?? null
@@ -230,7 +310,13 @@ export function FuelTransactionsTable() {
           <div>
             <CardTitle className="text-xl text-slate-900">Abastecimentos importados</CardTitle>
             <p className="mt-1 text-sm text-slate-500">
-              Consulte, filtre e confira as movimentações de {selectedMonthOption?.label ?? "mês selecionado"}.
+              {usesFullHistory && isHistoryLoading && !historyData
+                ? "Carregando abastecimentos para a busca..."
+                : isSearchingHistory && historyRange?.isSearchWindow
+                  ? `Buscando nos últimos ${SEARCH_WINDOW_DAYS} dias (${formatShortDate(historyRange.start)} a ${formatShortDate(historyRange.end)}). Use os campos De/Até para períodos anteriores.`
+                  : isSearchingHistory
+                    ? "Buscando no período informado em De/Até."
+                    : `Consulte, filtre e confira as movimentações de ${selectedMonthOption?.label ?? "mês selecionado"}.`}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -361,7 +447,7 @@ export function FuelTransactionsTable() {
                 <TableHead>Data</TableHead>
               </TableRow>
             </TableHeader>
-            <FuelTransactionsRows records={filtered} isLoading={isLoading} />
+            <FuelTransactionsRows records={filtered} isLoading={isLoading || (usesFullHistory && isHistoryLoading && !historyData)} />
           </Table>
         </div>
       </CardContent>

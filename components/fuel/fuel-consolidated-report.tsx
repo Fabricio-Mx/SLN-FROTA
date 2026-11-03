@@ -4,7 +4,13 @@ import { useMemo, useState } from "react"
 import useSWR from "swr"
 import { CalendarDays, Download, FileSpreadsheet, Fuel, Search } from "lucide-react"
 import { Bar, BarChart, CartesianGrid, LabelList, XAxis, YAxis } from "recharts"
-import { resolveCostCenterRecord, normalizeCostCenterDriverName } from "@/lib/cost-center-shared"
+import {
+  buildPlateDriverFallback,
+  isInactiveCostCenter,
+  normalizeCostCenterDriverName,
+  resolveCostCenterRecord,
+  resolveDriverNameWithFallback,
+} from "@/lib/cost-center-shared"
 import { parseFuelDateTime } from "@/lib/fuel-datetime"
 import { buildConsolidatedWorkbook, downloadBlob } from "@/lib/fuel-consolidated-export"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
@@ -206,16 +212,19 @@ export function FuelConsolidatedReport() {
   const sourceRecords = periodPreset === "mes-selecionado" ? records : (customRangeData?.records ?? records)
 
   const enrichedRecords = useMemo<EnrichedFuelRecord[]>(() => {
+    const plateFallback = buildPlateDriverFallback(sourceRecords)
+
     return sourceRecords
       .map((record) => {
         const parsedDate = parseFuelDateTime(record.dateTime)
-        const resolved = resolveCostCenterRecord(record.nomeMotorista, lookup)
+        const driverName = resolveDriverNameWithFallback(record, plateFallback)
+        const resolved = driverName ? resolveCostCenterRecord(driverName, lookup) : null
 
         return {
           centroCusto: resolved?.centroCusto ?? "Sem centro de custo",
           supervisor: resolved?.supervisor ?? "",
           coordenador: resolved?.coordenador ?? "",
-          nomeMotorista: record.nomeMotorista,
+          nomeMotorista: driverName || "Motorista não identificado",
           cardPlate: record.cardPlate.trim() || "-",
           valor: record.valor,
           parsedDate,
@@ -353,8 +362,11 @@ export function FuelConsolidatedReport() {
 
       const blob = await buildConsolidatedWorkbook({
         rows: consolidatedRows,
-        // Sem filtros de pessoa/busca, o resumo lista todos os centros cadastrados (zerados aparecem como "-").
-        extraCostCenters: hasNarrowingFilter ? [] : lookup.records.map((record) => record.centroCusto),
+        // Sem filtros de pessoa/busca, o resumo lista todos os centros cadastrados (zerados aparecem como "-"),
+        // exceto os centros que não são mais usados.
+        extraCostCenters: hasNarrowingFilter
+          ? []
+          : lookup.records.map((record) => record.centroCusto).filter((center) => !isInactiveCostCenter(center)),
         start: effectiveRange.start,
         end: effectiveRange.end,
         totalAbastecimentos: filteredRecords.length,

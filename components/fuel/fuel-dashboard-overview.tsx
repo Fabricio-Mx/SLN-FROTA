@@ -22,7 +22,7 @@ import { useFuelCostCenters } from "@/hooks/use-fuel-cost-centers"
 import { useFuelBudgetPlan } from "@/hooks/use-fuel-budget-plan"
 import { fuelFetcher, FUEL_DATA_SWR_KEY, type FuelResponse } from "@/hooks/use-fuel-data"
 import { getFuelFinancialPostingCycleBounds } from "@/lib/fuel-billing"
-import { normalizeCostCenterDriverName, resolveCostCenterRecord, type CostCenterLookup } from "@/lib/cost-center-shared"
+import { buildPlateDriverFallback, normalizeCostCenterDriverName, resolveCostCenterRecord, resolveDriverNameWithFallback, type CostCenterLookup } from "@/lib/cost-center-shared"
 import {
   computeCenterBudgetTotals,
   createBudgetCenterCodeResolver,
@@ -618,18 +618,59 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
     return parsedRecords.filter((record) => record.parsedDate >= analyticsRange.start && record.parsedDate <= analyticsRange.end)
   }, [analyticsRange.end, analyticsRange.start, parsedRecords])
 
+  // Os gráficos diário e semanal (semanas de segunda a domingo) olham para trás a partir do fim do período,
+  // então precisam de registros anteriores à competência carregada (ex.: dias do mês anterior).
+  const trendRange = useMemo(() => {
+    const anchor = analyticsRange.end
+    const start = startOfWeek(anchor)
+    start.setDate(start.getDate() - 7 * 7)
+    return { start, end: endOfDay(anchor) }
+  }, [analyticsRange.end])
+
+  const trendRangeKey = useMemo(() => {
+    const params = new URLSearchParams({
+      start: toDateInputValue(trendRange.start),
+      end: toDateInputValue(trendRange.end),
+      dateField: "transaction",
+    })
+
+    return `${FUEL_DATA_SWR_KEY}?${params.toString()}`
+  }, [trendRange.end, trendRange.start])
+
+  const { data: trendRangeData } = useSWR<FuelResponse>(trendRangeKey, fuelFetcher, {
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+    dedupingInterval: 30_000,
+    keepPreviousData: true,
+  })
+
+  const trendRecords = useMemo<FuelRecordWithDate[]>(() => {
+    const source = trendRangeData?.records
+      ? trendRangeData.records
+          .map((record) => ({
+            ...record,
+            parsedDate: parseFuelDateTime(record.dateTime),
+          }))
+          .filter((record) => !Number.isNaN(record.parsedDate.getTime()))
+      : parsedRecords
+
+    return source.filter((record) => record.parsedDate >= trendRange.start && record.parsedDate <= trendRange.end)
+  }, [parsedRecords, trendRange.end, trendRange.start, trendRangeData])
+
   const insights = useMemo(() => {
     const fuelMap = new Map<string, number>()
     const spendersMap = new Map<string, TopSpenderDatum>()
     const resolvedCostCenterByDriver = new Map<string, ReturnType<typeof resolveCostCenterRecord>>()
+    const plateFallback = buildPlateDriverFallback(filteredRecords)
 
     for (const record of filteredRecords) {
       const fuelType = normalizeFuelType(record.tipoCombustivel)
       fuelMap.set(fuelType, (fuelMap.get(fuelType) ?? 0) + record.valor)
 
-      const personKey = getPersonAggregationKey(record.nomeMotorista, record.cpfMotorista)
+      const driverName = resolveDriverNameWithFallback(record, plateFallback)
+      const personKey = getPersonAggregationKey(driverName, record.cpfMotorista)
       const current = spendersMap.get(personKey)
-      const normalizedDriver = normalizePersonName(record.nomeMotorista, record.cpfMotorista)
+      const normalizedDriver = normalizePersonName(driverName, record.cpfMotorista)
       const resolvedCostCenter = resolvedCostCenterByDriver.has(normalizedDriver)
         ? resolvedCostCenterByDriver.get(normalizedDriver) ?? null
         : resolveCostCenterRecord(normalizedDriver, costCenterLookup)
@@ -676,6 +717,9 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
     const topSpenders = Array.from(spendersMap.values())
       .sort((left, right) => right.total - left.total)
       .slice(0, 10)
+    const unmatchedSpenders = Array.from(spendersMap.values())
+      .filter((spender) => !spender.centroCusto)
+      .sort((left, right) => right.total - left.total)
 
     const topSpendersTotal = topSpenders.reduce((sum, spender) => sum + spender.total, 0)
     const topSpendersMappedCount = topSpenders.filter((spender) => spender.centroCusto).length
@@ -700,13 +744,16 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
       .values(),
     ).sort((left, right) => right.total - left.total)
 
-    const dailyMetric = filteredRecords.reduce((sum, record) => {
+    const dailyMetric = trendRecords.reduce((sum, record) => {
       return startOfDay(record.parsedDate).getTime() === startOfDay(anchorDate).getTime() ? sum + record.valor : sum
     }, 0)
 
-    const rollingWeekStart = startOfDay(new Date(anchorDate.getFullYear(), anchorDate.getMonth(), anchorDate.getDate() - 6))
-    const weeklyMetric = filteredRecords.reduce((sum, record) => {
-      return record.parsedDate >= rollingWeekStart && record.parsedDate <= anchorDate ? sum + record.valor : sum
+    // Semana da empresa: segunda a domingo, contendo o dia final do período.
+    const currentWeekEnd = endOfWeek(latestWeekStart)
+    const weeklyMetric = trendRecords.reduce((sum, record) => {
+      return record.parsedDate >= latestWeekStart && record.parsedDate <= currentWeekEnd && record.parsedDate <= anchorDate
+        ? sum + record.valor
+        : sum
     }, 0)
 
     const currentMonthStart = startOfMonth(anchorDate)
@@ -727,7 +774,7 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
       return {
         dateKey: toDateKey(day),
         label: formatCompactDate(day),
-        total: filteredRecords.reduce((sum, record) => {
+        total: trendRecords.reduce((sum, record) => {
           return record.parsedDate >= day && record.parsedDate <= dayEnd ? sum + record.valor : sum
         }, 0),
       }
@@ -742,7 +789,7 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
         startKey: toDateKey(weekStart),
         endKey: toDateKey(weekEnd),
         label: formatCompactDate(weekStart),
-        total: filteredRecords.reduce((sum, record) => {
+        total: trendRecords.reduce((sum, record) => {
           return record.parsedDate >= weekStart && record.parsedDate <= weekEnd ? sum + record.valor : sum
         }, 0),
         average: 0,
@@ -784,11 +831,12 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
       topSpendersShare: periodTotal > 0 ? (topSpendersTotal / periodTotal) * 100 : 0,
       topSpender: topSpenders[0] ?? null,
       topSpenders,
+      unmatchedSpenders,
       topCostCenter: costCenterRanking[0] ?? null,
       weeklyMetric,
       weeklySeries,
     }
-  }, [analyticsPreset, analyticsRange.end, analyticsRange.start, costCenterLookup, filteredRecords, monthTotals])
+  }, [analyticsPreset, analyticsRange.end, analyticsRange.start, costCenterLookup, filteredRecords, monthTotals, trendRecords])
 
   const summaryCard = useMemo(() => {
     if (analyticsPreset === "custom") {
@@ -817,31 +865,31 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
   const analyticsCopy = useMemo(() => {
     if (analyticsPreset === "custom") {
       return {
-        dailyDescription: "Últimos 7 dias dentro do recorte aplicado",
+        dailyDescription: "Últimos 7 dias até o fim do recorte",
         dailyMetricLabel: "Fim do recorte",
-        weeklyTitle: "Janela final de 7 dias",
-        weeklyDescription: "Total móvel dos 7 dias finais do recorte",
-        weeklyMetricLabel: "7 dias finais",
+        weeklyTitle: "Gasto semanal",
+        weeklyDescription: "Últimas 8 semanas (segunda a domingo)",
+        weeklyMetricLabel: "Semana seg–dom",
         monthlyTitle: "Mês final do recorte",
         monthlyDescription: "Total do mês em que o recorte termina",
         monthlyMetricLabel: "Mês do fim",
         summaryTitle: "Resumo do recorte atual",
-        summaryWeeklyCaption: "7 dias finais do recorte",
+        summaryWeeklyCaption: "Semana (seg–dom) do fim do recorte",
         summaryMonthlyCaption: "Mês do fim do recorte",
       }
     }
 
     return {
-      dailyDescription: "Últimos 7 dias dentro do período",
+      dailyDescription: "Últimos 7 dias até o dia final",
       dailyMetricLabel: "Dia final",
       weeklyTitle: "Gasto semanal",
-      weeklyDescription: "Últimas 8 semanas do recorte",
-      weeklyMetricLabel: "7 dias",
+      weeklyDescription: "Últimas 8 semanas (segunda a domingo)",
+      weeklyMetricLabel: "Semana seg–dom",
       monthlyTitle: "Gasto mensal",
       monthlyDescription: "Últimos 6 meses do recorte",
       monthlyMetricLabel: "Mês final",
       summaryTitle: "Resumo do fechamento atual",
-      summaryWeeklyCaption: "Últimos 7 dias",
+      summaryWeeklyCaption: "Semana atual (seg–dom)",
       summaryMonthlyCaption: "Mês final",
     }
   }, [analyticsPreset])
@@ -887,10 +935,10 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
   const selectedDayRecords = useMemo(() => {
     if (!selectedDailyPoint?.dateKey) return []
 
-    return filteredRecords
+    return trendRecords
       .filter((record) => toDateKey(record.parsedDate) === selectedDailyPoint.dateKey)
       .sort((left, right) => right.parsedDate.getTime() - left.parsedDate.getTime())
-  }, [filteredRecords, selectedDailyPoint])
+  }, [trendRecords, selectedDailyPoint])
 
   const selectedDayScopedRecords = useMemo(() => {
     if (dailyScopeFilter === "all") return selectedDayRecords
@@ -1042,10 +1090,10 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
   const selectedWeekRecords = useMemo(() => {
     if (!selectedWeekRange) return []
 
-    return filteredRecords
+    return trendRecords
       .filter((record) => record.parsedDate >= selectedWeekRange.start && record.parsedDate <= selectedWeekRange.end)
       .sort((left, right) => right.parsedDate.getTime() - left.parsedDate.getTime())
-  }, [filteredRecords, selectedWeekRange])
+  }, [trendRecords, selectedWeekRange])
 
   const selectedWeekScopedRecords = useMemo(() => {
     if (weeklyScopeFilter === "all") return selectedWeekRecords
@@ -1817,7 +1865,7 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
         </div>
       </div>
 
-      {unmatchedDriversPreview.length > 0 ? (
+      {insights.unmatchedSpenders.length > 0 ? (
         <Card className="border-[#f2d6cc] bg-[linear-gradient(180deg,#fffdfc_0%,#fff6f2_100%)] shadow-sm">
           <CardHeader className="border-b border-[#f2d6cc] pb-4">
             <div className="flex items-start justify-between gap-3">
@@ -1831,12 +1879,12 @@ export function FuelDashboardOverview({ isMaster = false, onManageBudget }: Fuel
                 </div>
               </div>
               <Badge variant="outline" className="border-[#f1c8ba] bg-[#fff1eb] text-[#b85e54]">
-                {unmatchedDriversPreview.length} em destaque
+                {insights.unmatchedSpenders.length} no período
               </Badge>
             </div>
           </CardHeader>
           <CardContent className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
-            {unmatchedDriversPreview.map((driver) => (
+            {insights.unmatchedSpenders.slice(0, 12).map((driver) => (
               <div key={driver.key} className="rounded-2xl border border-[#f3d8d0] bg-white/90 p-4">
                 <p className="line-clamp-2 text-sm font-bold text-slate-900">{driver.name}</p>
                 <p className="mt-2 text-lg font-black tracking-tight text-[#b85e54]">{formatCurrency(driver.total)}</p>

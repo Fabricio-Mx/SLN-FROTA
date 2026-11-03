@@ -3,7 +3,15 @@
 import { useMemo, useState } from "react"
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from "recharts"
 import { AlertTriangle, Building2, PencilLine, Users, Wallet } from "lucide-react"
-import { getCostCenterBaseKey, preferCostCenterLabel, resolveCostCenterRecord, normalizeCostCenterDriverName } from "@/lib/cost-center-shared"
+import {
+  buildPlateDriverFallback,
+  getCostCenterBaseKey,
+  normalizeCardPlate,
+  normalizeCostCenterDriverName,
+  preferCostCenterLabel,
+  resolveCostCenterRecord,
+  resolveDriverNameWithFallback,
+} from "@/lib/cost-center-shared"
 import { FuelCostCenterEditor } from "@/components/fuel/fuel-cost-center-editor"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { useFuelCostCenters } from "@/hooks/use-fuel-cost-centers"
@@ -23,6 +31,8 @@ type DriverSummary = {
   coordenador: string
   total: number
   abastecimentos: number
+  /** Abastecimento sem nome de motorista: não dá para vincular pela planilha de centro de custo. */
+  semMotorista?: boolean
 }
 
 type CostCenterSummary = {
@@ -137,11 +147,15 @@ export function FuelCostCenterInsights({ records: scopedRecords, description }: 
   const recordsToAnalyze = scopedRecords ?? records
 
   const enrichedRecords = useMemo<EnrichedCostCenterRecord[]>(() => {
+    const plateFallback = buildPlateDriverFallback(recordsToAnalyze)
+
     return recordsToAnalyze.map((record) => {
-      const costCenterRecord = resolveCostCenterRecord(record.nomeMotorista, lookup)
+      const driverName = resolveDriverNameWithFallback(record, plateFallback)
+      const costCenterRecord = driverName ? resolveCostCenterRecord(driverName, lookup) : null
 
       return {
         ...record,
+        nomeMotorista: driverName,
         centroCusto: costCenterRecord?.centroCusto ?? "",
         supervisor: costCenterRecord?.supervisor ?? "",
         coordenador: costCenterRecord?.coordenador ?? "",
@@ -179,18 +193,22 @@ export function FuelCostCenterInsights({ records: scopedRecords, description }: 
     for (const record of filteredEnrichedRecords) {
       totalSpend += record.valor
 
-      const driverKey = normalizeCostCenterDriverName(record.nomeMotorista)
-      if (driverKey) {
-        const currentDriver = drivers.get(driverKey)
-        drivers.set(driverKey, {
-          motorista: currentDriver?.motorista ?? record.nomeMotorista,
-          centroCusto: currentDriver?.centroCusto ?? record.centroCusto,
-          supervisor: currentDriver?.supervisor ?? record.supervisor,
-          coordenador: currentDriver?.coordenador ?? record.coordenador,
-          total: (currentDriver?.total ?? 0) + record.valor,
-          abastecimentos: (currentDriver?.abastecimentos ?? 0) + 1,
-        })
-      }
+      const nameKey = normalizeCostCenterDriverName(record.nomeMotorista)
+      const plateKey = normalizeCardPlate(record.cardPlate)
+      // Sem nome de motorista, agrupa pelo cartão para o abastecimento não sumir da lista de pendências.
+      const driverKey = nameKey || `cartao:${plateKey || "sem-placa"}`
+      const currentDriver = drivers.get(driverKey)
+      drivers.set(driverKey, {
+        motorista:
+          currentDriver?.motorista ??
+          (nameKey ? record.nomeMotorista : `Sem motorista identificado (cartão ${plateKey || "sem placa"})`),
+        centroCusto: currentDriver?.centroCusto ?? record.centroCusto,
+        supervisor: currentDriver?.supervisor ?? record.supervisor,
+        coordenador: currentDriver?.coordenador ?? record.coordenador,
+        total: (currentDriver?.total ?? 0) + record.valor,
+        abastecimentos: (currentDriver?.abastecimentos ?? 0) + 1,
+        semMotorista: !nameKey,
+      })
 
       if (!record.centroCusto) {
         continue
@@ -586,10 +604,14 @@ export function FuelCostCenterInsights({ records: scopedRecords, description }: 
                     <TableCell>{driver.abastecimentos}</TableCell>
                     <TableCell>{formatCurrency(driver.total)}</TableCell>
                     <TableCell className="text-right">
-                      <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={() => setEditingDriver(driver)}>
-                        <PencilLine className="h-4 w-4" />
-                        Editar
-                      </Button>
+                      {driver.semMotorista ? (
+                        <span className="text-xs text-muted-foreground">Sem nome no relatório</span>
+                      ) : (
+                        <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={() => setEditingDriver(driver)}>
+                          <PencilLine className="h-4 w-4" />
+                          Editar
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

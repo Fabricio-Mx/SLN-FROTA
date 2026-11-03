@@ -10,9 +10,15 @@ import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
 import { isAgregadoVehicle } from "@/lib/vehicle-classification"
 import { getFuelFinancialPostingCycleBounds } from "@/lib/fuel-billing"
 import { isSameMonth } from "@/lib/fornecedores"
-import { getMultaTotalValue } from "@/lib/multas"
+import {
+  MULTA_FONTE_LABELS,
+  MULTAS_PAINEL_JANELA_DIAS,
+  filterRecentMultas,
+  getRecentWindowStart,
+  type MultaImportada,
+} from "@/lib/multas-import-shared"
 import { cn } from "@/lib/utils"
-import type { Vehicle, Multa, OrdemServico } from "@/lib/types"
+import type { Vehicle, OrdemServico } from "@/lib/types"
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -45,7 +51,8 @@ function toDateInputValue(date: Date): string {
 
 interface StatsCardsProps {
   vehicles: Vehicle[]
-  multas: Multa[]
+  /** Multas importadas de todas as fontes (Localiza e carros próprios). */
+  multas: MultaImportada[]
   ordens?: OrdemServico[]
 }
 
@@ -114,12 +121,12 @@ const statCardVariants: Record<string, { cardClass: string; iconClass: string; g
     iconClass: "border-[#ccb5fa] bg-[#ede2ff] text-[#5b1fc7]",
     glowClass: "bg-[#c3b0f2]/22",
   },
-  "Multas Enviadas pela Frota": {
+  "Total de Multas (120 dias)": {
     cardClass: "border-[#efd0d6] bg-[linear-gradient(180deg,#ffeff2_0%,#f8e3e8_100%)] shadow-[0_10px_24px_rgba(187,98,122,0.10)]",
     iconClass: "border-[#efb3c4] bg-[#ffe5ec] text-[#bd2c52]",
     glowClass: "bg-[#efafbc]/22",
   },
-  "Multas Pagas pelo RH": {
+  "Multas Tratadas (120 dias)": {
     cardClass: "border-[#cee2d4] bg-[linear-gradient(180deg,#eef8f1_0%,#e4f0e8_100%)] shadow-[0_10px_24px_rgba(87,147,111,0.10)]",
     iconClass: "border-[#b6ddc3] bg-[#e3f3e8] text-[#226b3d]",
     glowClass: "bg-[#9fd0af]/22",
@@ -185,14 +192,17 @@ export function StatsCards({ vehicles, multas, ordens = [] }: StatsCardsProps) {
     const naOficina = fleetVehicles.filter((vehicle) => vehicle.naOficina).length
     const paraRevisao = fleetVehicles.filter((vehicle) => isVehicleDueForReview(vehicle)).length
     const contratosVencendoFrota = countExpiringContracts(fleetVehicles)
-    const valorEnviadoFrota = multas
-      .filter((multa) => multa.status === "enviado")
-      .reduce((sum, multa) => sum + getMultaTotalValue(multa), 0)
-    const quantidadeEnviadaFrota = multas.filter((multa) => multa.status === "enviado").length
-    const valorPagoRh = multas
-      .filter((multa) => multa.rhStatus === "pago")
-      .reduce((sum, multa) => sum + getMultaTotalValue(multa), 0)
-    const quantidadePagaRh = multas.filter((multa) => multa.rhStatus === "pago").length
+    const multasRecentes = filterRecentMultas(multas, MULTAS_PAINEL_JANELA_DIAS)
+    const multasTratadas = multasRecentes.filter((multa) => multa.tratativa === "tratada")
+    const valorTotalMultas = multasRecentes.reduce((sum, multa) => sum + multa.valorFaturado, 0)
+    const valorMultasTratadas = multasTratadas.reduce((sum, multa) => sum + multa.valorFaturado, 0)
+    const percentualTratadas = multasRecentes.length > 0 ? Math.round((multasTratadas.length / multasRecentes.length) * 100) : 0
+    const janelaMultasInicio = getRecentWindowStart(MULTAS_PAINEL_JANELA_DIAS)
+    const multasPorFonte = (Object.keys(MULTA_FONTE_LABELS) as Array<keyof typeof MULTA_FONTE_LABELS>)
+      .map((fonte) => ({ fonte, count: multasRecentes.filter((multa) => multa.fonte === fonte).length }))
+      .filter((item) => item.count > 0)
+      .map((item) => `${MULTA_FONTE_LABELS[item.fonte]}: ${item.count}`)
+      .join(" · ")
 
     const agregados = vehicles.filter((vehicle) => isAgregadoVehicle(vehicle))
     const valorAgregados = agregados.reduce((sum, vehicle) => {
@@ -268,16 +278,17 @@ export function StatsCards({ vehicles, multas, ordens = [] }: StatsCardsProps) {
           color: "bg-emerald-500/10 text-emerald-600",
         },
         {
-          label: "Multas Enviadas pela Frota",
-          value: formatCurrency(valorEnviadoFrota),
-          helperText: `${quantidadeEnviadaFrota} ${quantidadeEnviadaFrota === 1 ? "multa enviada" : "multas enviadas"}`,
+          label: "Total de Multas (120 dias)",
+          value: formatCurrency(valorTotalMultas),
+          helperText: `${multasRecentes.length} ${multasRecentes.length === 1 ? "multa" : "multas"} desde ${formatFullDate(janelaMultasInicio)}`,
+          secondaryHelperText: multasPorFonte || "Nenhuma multa importada no período",
           icon: Send,
           color: "bg-sky-500/10 text-sky-600",
         },
         {
-          label: "Multas Pagas pelo RH",
-          value: formatCurrency(valorPagoRh),
-          helperText: `${quantidadePagaRh} ${quantidadePagaRh === 1 ? "multa paga" : "multas pagas"}`,
+          label: "Multas Tratadas (120 dias)",
+          value: formatCurrency(valorMultasTratadas),
+          helperText: `${multasTratadas.length} ${multasTratadas.length === 1 ? "multa tratada" : "multas tratadas"} · ${percentualTratadas}% do total`,
           icon: BadgeCheck,
           color: "bg-emerald-500/10 text-emerald-600",
         },

@@ -6,7 +6,7 @@ import Link from "next/link"
 import { ArrowRight, CalendarRange, Car, CircleDollarSign, Fuel, Plus, Search, Sparkles, Users } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import type { AppUser, UserRole } from "@/lib/types"
-import { canAddColaboradores, canAddVehicles, canApproveOrdemServico, canEditMultaRhStatus, canManageFornecedores, canManageMultas, hasMasterAccess } from "@/lib/auth-shared"
+import { canAddColaboradores, canAddVehicles, canApproveOrdemServico, canManageFornecedores, canManageMultas, hasMasterAccess } from "@/lib/auth-shared"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -43,11 +43,12 @@ import {
 } from "@/components/ui/alert-dialog"
 import { FuelDataProvider, useOptionalFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { FuelStatusAlert } from "@/components/fuel/fuel-status-alert"
-import { MultasDashboard } from "@/components/multas/multas-dashboard"
+import { MultasWorkspace } from "@/components/multas/multas-workspace"
 import { useVehicles } from "@/hooks/use-vehicles"
 import { refreshColaboradores, useColaboradores } from "@/hooks/use-colaboradores"
 import { useDriverLinks } from "@/hooks/use-driver-links"
-import { useMultas } from "@/hooks/use-multas"
+import { useMultasImportadas } from "@/hooks/use-multas-importadas"
+import { getAllImportedMultas, normalizeMultaSearchText, parseMultaLocalDate } from "@/lib/multas-import-shared"
 import { useOrdensServico } from "@/hooks/use-ordens-servico"
 import { describeVencimento, getParcelasEmAlerta } from "@/lib/fornecedores"
 import { mapVehicleCardPlates } from "@/lib/driver-links-shared"
@@ -200,7 +201,8 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     updateColaborador,
     deleteColaborador,
   } = useColaboradores(shouldLoadColaboradores)
-  const { multas } = useMultas(shouldLoadMultas)
+  const { store: multasStore } = useMultasImportadas(shouldLoadMultas)
+  const multas = useMemo(() => getAllImportedMultas(multasStore), [multasStore])
   const { ordens } = useOrdensServico(!isLightweightSection)
   const { links: driverLinks } = useDriverLinks(resolvedInitialSection === "veiculos-frota")
 
@@ -231,7 +233,14 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     const items: HeaderNotification[] = []
     const contratosVencendo = countExpiringContracts(vehicles.filter((vehicle) => vehicle.frota))
     const cnhAlertas = countCNHAlerts(colaboradores)
-    const multasPendentes = multas.filter((multa) => multa.rhStatus === "pendente").length
+    const hoje = new Date()
+    const inicioHoje = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())
+    const limiteAlerta = new Date(inicioHoje.getFullYear(), inicioHoje.getMonth(), inicioHoje.getDate() + 7, 23, 59, 59)
+    const multasPrazoProximo = multas.filter((multa) => {
+      if (!normalizeMultaSearchText(multa.situacaoIndicacao).startsWith("pendente")) return false
+      const limite = parseMultaLocalDate(multa.dataLimiteEnvio)
+      return !!limite && limite >= inicioHoje && limite <= limiteAlerta
+    }).length
 
     if (contratosVencendo > 0) {
       items.push({
@@ -251,11 +260,11 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
       })
     }
 
-    if (multasPendentes > 0) {
+    if (multasPrazoProximo > 0) {
       items.push({
         id: "multas",
-        title: `${multasPendentes} multa${multasPendentes > 1 ? "s" : ""} pendente${multasPendentes > 1 ? "s" : ""}`,
-        description: "Aguardando tratativa do RH.",
+        title: `${multasPrazoProximo} multa${multasPrazoProximo > 1 ? "s" : ""} com prazo de indicação próximo`,
+        description: "Pendentes de indicação com limite nos próximos 7 dias.",
         href: "/dashboard/multas",
       })
     }
@@ -1010,12 +1019,7 @@ function FleetDashboardContent({ initialUser, initialSection }: Required<FleetDa
     if (resolvedInitialSection === "multas") {
       return (
         <div className="w-full">
-          <MultasDashboard
-            vehicles={vehicles}
-            colaboradores={colaboradores}
-            canManage={canManageMultas(userRole)}
-            canEditRhStatus={canEditMultaRhStatus(userRole)}
-          />
+          <MultasWorkspace canManage={canManageMultas(userRole)} />
         </div>
       )
     }

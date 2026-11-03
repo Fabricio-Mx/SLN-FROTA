@@ -80,7 +80,7 @@ export const DASHBOARD_SECTIONS: DashboardSectionItem[] = [
     id: "multas",
     href: "/dashboard/multas",
     label: "Multas",
-    description: "Acompanhamento de infrações, indicação de condutor, valores e status de tratativa.",
+    description: "Importação das planilhas de infrações, painel de tratativas, valores e prazos de indicação.",
     icon: ShieldAlert,
   },
   {

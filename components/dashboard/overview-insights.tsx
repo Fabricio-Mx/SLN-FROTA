@@ -5,15 +5,22 @@ import { Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tool
 import { CheckCircle2, Fuel, ShieldAlert, Users } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import { getMultaTotalValue } from "@/lib/multas"
+import {
+  MULTA_TRATATIVA_COLORS,
+  MULTA_TRATATIVA_LABELS,
+  MULTA_TRATATIVA_ORDER,
+  MULTAS_PAINEL_JANELA_DIAS,
+  filterRecentMultas,
+  type MultaImportada,
+} from "@/lib/multas-import-shared"
 import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
 import type { UseFuelDataResult } from "@/hooks/use-fuel-data"
-import type { Colaborador, Multa, Vehicle } from "@/lib/types"
+import type { Colaborador, Vehicle } from "@/lib/types"
 
 type OverviewInsightsProps = {
   vehicles: Vehicle[]
   colaboradores: Colaborador[]
-  multas: Multa[]
+  multas: MultaImportada[]
   fuelData: UseFuelDataResult | null
 }
 
@@ -49,18 +56,16 @@ export function OverviewInsights({ vehicles, colaboradores, multas, fuelData }: 
   }, [fuelData])
 
   const multasChartData = useMemo(() => {
-    const pago = multas.filter((multa) => multa.rhStatus === "pago").reduce((sum, multa) => sum + getMultaTotalValue(multa), 0)
-    const pendente = multas
-      .filter((multa) => multa.rhStatus === "pendente")
-      .reduce((sum, multa) => sum + getMultaTotalValue(multa), 0)
-    const total = pago + pendente
+    const recentes = filterRecentMultas(multas, MULTAS_PAINEL_JANELA_DIAS)
+    const total = recentes.reduce((sum, multa) => sum + multa.valorFaturado, 0)
 
     return {
       total,
-      data: [
-        { name: "Pagas", value: pago, color: "#159a8c" },
-        { name: "Pendentes", value: pendente, color: "#e0aa22" },
-      ].filter((item) => item.value > 0),
+      data: MULTA_TRATATIVA_ORDER.map((tratativa) => ({
+        name: MULTA_TRATATIVA_LABELS[tratativa],
+        value: recentes.filter((multa) => multa.tratativa === tratativa).reduce((sum, multa) => sum + multa.valorFaturado, 0),
+        color: MULTA_TRATATIVA_COLORS[tratativa].solid,
+      })).filter((item) => item.value > 0),
     }
   }, [multas])
 
@@ -152,10 +157,10 @@ export function OverviewInsights({ vehicles, colaboradores, multas, fuelData }: 
           </div>
 
           <div>
-            <p className="text-xs font-medium text-muted-foreground">Total Multas</p>
+            <p className="text-xs font-medium text-muted-foreground">Total Multas (últimos {MULTAS_PAINEL_JANELA_DIAS} dias)</p>
             <p className="text-xl font-bold text-slate-900">{formatCurrency(multasChartData.total)}</p>
             {multasChartData.data.length === 0 ? (
-              <div className={cn(EMPTY_STATE_CLASS, "mt-2 h-[160px]")}>Nenhuma multa registrada.</div>
+              <div className={cn(EMPTY_STATE_CLASS, "mt-2 h-[160px]")}>Nenhuma multa importada no período.</div>
             ) : (
               <div className="mt-2 h-[160px]">
                 <ResponsiveContainer width="100%" height="100%">

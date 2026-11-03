@@ -42,6 +42,57 @@ function hasCostCenterCode(value: string): boolean {
   return /^\d+\s*-\s*/.test(normalizeCostCenterLabel(value))
 }
 
+/** Centros de custo que não são mais usados: não entram como linhas zeradas nos relatórios exportados. */
+export const INACTIVE_COST_CENTERS = ["CASA CLIENTE GIGA+ - ES", "CASA CLIENTE GIGA+ - RJ/MG", "CASA CLIENTE VIP"]
+
+function getCostCenterCompactKey(value: string): string {
+  return getCostCenterBaseKey(value).replace(/[^a-z0-9]/g, "")
+}
+
+const INACTIVE_COST_CENTER_KEYS = new Set(INACTIVE_COST_CENTERS.map(getCostCenterCompactKey))
+
+export function isInactiveCostCenter(value: string): boolean {
+  return INACTIVE_COST_CENTER_KEYS.has(getCostCenterCompactKey(value))
+}
+
+export function isMissingDriverName(value: string): boolean {
+  const normalized = normalizeText(value).toLowerCase()
+  return !normalized || normalized.includes("sem motorista")
+}
+
+export function normalizeCardPlate(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "")
+}
+
+/**
+ * Alguns abastecimentos chegam sem nome de motorista. Quando o cartão (placa) foi usado por um único
+ * motorista no mesmo recorte, o abastecimento é atribuído a ele.
+ */
+export function buildPlateDriverFallback(records: Array<{ cardPlate: string; nomeMotorista: string }>): Map<string, string> {
+  const driversByPlate = new Map<string, Map<string, string>>()
+
+  for (const record of records) {
+    if (isMissingDriverName(record.nomeMotorista)) continue
+    const plate = normalizeCardPlate(record.cardPlate)
+    if (!plate) continue
+
+    const drivers = driversByPlate.get(plate) ?? new Map<string, string>()
+    drivers.set(normalizeCostCenterDriverName(record.nomeMotorista), record.nomeMotorista.trim())
+    driversByPlate.set(plate, drivers)
+  }
+
+  const fallback = new Map<string, string>()
+  for (const [plate, drivers] of driversByPlate) {
+    if (drivers.size === 1) fallback.set(plate, Array.from(drivers.values())[0])
+  }
+  return fallback
+}
+
+export function resolveDriverNameWithFallback(record: { cardPlate: string; nomeMotorista: string }, fallback: Map<string, string>): string {
+  if (!isMissingDriverName(record.nomeMotorista)) return record.nomeMotorista
+  return fallback.get(normalizeCardPlate(record.cardPlate)) ?? ""
+}
+
 export function scoreCostCenterLabel(value: string): number {
   const normalized = normalizeCostCenterLabel(value)
   let score = normalized.length
