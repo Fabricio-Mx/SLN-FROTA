@@ -7,6 +7,7 @@ import { Bar, BarChart, CartesianGrid, LabelList, XAxis, YAxis } from "recharts"
 import {
   buildPlateDriverFallback,
   isInactiveCostCenter,
+  isMissingDriverName,
   normalizeCostCenterDriverName,
   resolveCostCenterRecord,
   resolveDriverNameWithFallback,
@@ -219,12 +220,15 @@ export function FuelConsolidatedReport() {
         const parsedDate = parseFuelDateTime(record.dateTime)
         const driverName = resolveDriverNameWithFallback(record, plateFallback)
         const resolved = driverName ? resolveCostCenterRecord(driverName, lookup) : null
+        // O fechamento da VELOE lista essas transações sem motorista: o centro de custo segue o dono do cartão,
+        // mas o valor não é somado no nome dele para o detalhamento bater com a fatura.
+        const displayName = isMissingDriverName(record.nomeMotorista) ? "" : driverName
 
         return {
           centroCusto: resolved?.centroCusto ?? "Sem centro de custo",
           supervisor: resolved?.supervisor ?? "",
           coordenador: resolved?.coordenador ?? "",
-          nomeMotorista: driverName || "Motorista não identificado",
+          nomeMotorista: displayName || "Motorista não identificado",
           cardPlate: record.cardPlate.trim() || "-",
           valor: record.valor,
           parsedDate,

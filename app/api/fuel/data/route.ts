@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import {
+  collapseShiftedFuelDuplicates,
   getFuelMonthKey,
   getFuelMonthOptions,
   getFuelRecordsForMonth,
@@ -110,7 +111,7 @@ function collapseFuelRecords(records: FuelRecord[]): FuelRecord[] {
     deduped.set(key, scoreApiFuelRecord(record) >= scoreApiFuelRecord(current) ? record : current)
   }
 
-  return Array.from(deduped.values()).sort((left, right) => left.dateTime.localeCompare(right.dateTime))
+  return collapseShiftedFuelDuplicates(Array.from(deduped.values()))
 }
 
 function buildWeeklyComparison(currentRecords: FuelRecord[], history: FuelMonthArchive[]) {

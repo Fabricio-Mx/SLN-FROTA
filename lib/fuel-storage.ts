@@ -136,6 +136,52 @@ function preferFuelRecord(current: FuelRecord, candidate: FuelRecord): FuelRecor
   return candidate.dateTime >= current.dateTime ? candidate : current
 }
 
+const SHIFTED_DUPLICATE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+function buildShiftedDuplicateKey(record: FuelRecord): string | null {
+  if (typeof record.km !== "number" || record.km <= 0) return null
+
+  const date = parseFuelDateTime(record.dateTime)
+  if (Number.isNaN(date.getTime())) return null
+
+  const hour = `${date.getHours()}`.padStart(2, "0")
+  const minute = `${date.getMinutes()}`.padStart(2, "0")
+
+  return [
+    normalizeFuelIdentity(record.cardPlate),
+    normalizeFuelIdentity(record.tipoCombustivel),
+    Number(record.valor.toFixed(2)),
+    record.km,
+    `${hour}:${minute}`,
+  ].join("|")
+}
+
+/**
+ * A VELOE às vezes reenvia a mesma transação com a data deslocada (mesmo cartão, produto, valor, hodômetro
+ * e horário, mas outro dia). Mantemos a ocorrência mais antiga, que é a que consta no fechamento da fatura.
+ */
+export function collapseShiftedFuelDuplicates(records: FuelRecord[]): FuelRecord[] {
+  const anchors = new Map<string, number>()
+  const kept: FuelRecord[] = []
+
+  for (const record of sortFuelRecords(records)) {
+    const key = buildShiftedDuplicateKey(record)
+    if (!key) {
+      kept.push(record)
+      continue
+    }
+
+    const time = parseFuelDateTime(record.dateTime).getTime()
+    const anchor = anchors.get(key)
+    if (anchor !== undefined && time - anchor <= SHIFTED_DUPLICATE_WINDOW_MS) continue
+
+    anchors.set(key, time)
+    kept.push(record)
+  }
+
+  return kept
+}
+
 export function dedupeFuelRecords(records: FuelRecord[]): FuelRecord[] {
   const deduped = new Map<string, FuelRecord>()
 
@@ -151,7 +197,7 @@ export function dedupeFuelRecords(records: FuelRecord[]): FuelRecord[] {
     deduped.set(duplicateKey, preferFuelRecord(current, record))
   }
 
-  return sortFuelRecords(Array.from(deduped.values()))
+  return collapseShiftedFuelDuplicates(Array.from(deduped.values()))
 }
 
 function mergeFuelRecords(existing: FuelRecord[], incoming: FuelRecord[]): FuelRecord[] {
