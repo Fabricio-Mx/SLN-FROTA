@@ -10,6 +10,7 @@ import {
   FileText,
   IdCard,
   Loader2,
+  FileSpreadsheet,
   RefreshCw,
   Search,
   ScrollText,
@@ -34,6 +35,7 @@ import { useCrlvAnalise } from "@/hooks/use-crlv-analise"
 import { useVehicles } from "@/hooks/use-vehicles"
 import type { Colaborador, DriveFile, Vehicle } from "@/lib/types"
 import { findCrlvFile, getCrlvValidade, type CrlvValidade } from "@/lib/crlv-validade"
+import { downloadCrlvWorkbook } from "@/lib/crlv-export"
 import { isVisibleInFrotaSection } from "@/lib/vehicle-classification"
 
 type DocumentoTipo = "crlv" | "cnh" | "termo"
@@ -49,6 +51,7 @@ type DocumentoRow = {
   arquivo: DriveFile | null
   propriedade?: CrlvPropriedade
   validade?: CrlvValidade | null
+  renavam?: string
 }
 
 function normalize(value: string): string {
@@ -83,6 +86,7 @@ function buildCrlvRows(vehicles: Vehicle[]): DocumentoRow[] {
       arquivo,
       propriedade: (vehicle.tipoPropriedade === "alugado" ? "alugado" : "proprio") as CrlvPropriedade,
       validade: getCrlvValidade(vehicle.placa, arquivo),
+      renavam: vehicle.renavan || "",
     }
   })
 }
@@ -341,6 +345,7 @@ export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
   const [somenteVencidos, setSomenteVencidos] = useState(false)
   const [crlvPropriedade, setCrlvPropriedade] = useState<CrlvPropriedade>("proprio")
   const [uploadingKey, setUploadingKey] = useState<string | null>(null)
+  const [exportando, setExportando] = useState(false)
 
   const crlvRowsAll = useMemo(() => buildCrlvRows(vehicles), [vehicles])
   const crlvProprios = useMemo(() => crlvRowsAll.filter((row) => row.propriedade === "proprio"), [crlvRowsAll])
@@ -421,6 +426,37 @@ export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
       .filter((row) => (somenteVencidos && row.tipo === "crlv" ? row.validade?.status === "vencido" : true))
       .filter((row) => (term ? normalize(`${row.titulo} ${row.subtitulo} ${row.detalhe}`).includes(term) : true))
       .sort((left, right) => left.titulo.localeCompare(right.titulo, "pt-BR"))
+  }
+
+  const handleExportarProprios = async () => {
+    const rows = applyFilters(crlvProprios)
+    const filtros = [
+      search.trim() ? `Busca: "${search.trim()}"` : null,
+      somentePendentes ? "Somente pendentes" : null,
+      somenteVencidos ? "Somente vencidos" : null,
+    ].filter(Boolean)
+
+    setExportando(true)
+    try {
+      await downloadCrlvWorkbook({
+        title: "Relatório de CRLV — Veículos Próprios",
+        filtroLabel: filtros.length > 0 ? `Filtros: ${filtros.join(", ")}` : `${rows.length} veículo(s)`,
+        records: rows.map((row) => ({
+          placa: row.titulo,
+          modelo: row.subtitulo,
+          renavam: row.renavam ?? "",
+          validade: row.validade ?? null,
+        })),
+      })
+    } catch (error) {
+      toast({
+        title: "Erro ao exportar",
+        description: error instanceof Error ? error.message : "Falha ao gerar a planilha.",
+        variant: "destructive",
+      })
+    } finally {
+      setExportando(false)
+    }
   }
 
   const tabs = [
@@ -540,11 +576,27 @@ export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
                       )
                     })}
 
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="ml-auto border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                      disabled={exportando || crlvProprios.length === 0}
+                      onClick={() => void handleExportarProprios()}
+                      title="Exporta para Excel o relatório de CRLV dos veículos próprios (respeita a busca e os filtros)"
+                    >
+                      {exportando ? (
+                        <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                      ) : (
+                        <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+                      )}
+                      Exportar próprios (Excel)
+                    </Button>
+
                     {canManage ? (
                       <Button
                         type="button"
                         variant="outline"
-                        className="ml-auto bg-white"
+                        className="bg-white"
                         disabled={analisando}
                         onClick={() => void handleReanalisar()}
                         title="Lê novamente todos os PDFs de CRLV e recalcula a validade"
