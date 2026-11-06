@@ -1,13 +1,16 @@
 "use client"
 
 import { useMemo } from "react"
+import Link from "next/link"
 import useSWR from "swr"
-import { Car, Key, CreditCard, AlertTriangle, Wrench, Settings, Fuel, Send, BadgeCheck, Truck, Wallet, ClipboardList, CheckCircle2, Receipt } from "lucide-react"
+import { Car, Key, CreditCard, AlertTriangle, Wrench, Settings, Fuel, Send, BadgeCheck, Truck, Wallet, ClipboardList, CheckCircle2, Receipt, FileWarning } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useFuelDataContext } from "@/components/fuel/fuel-data-provider"
 import { fuelFetcher, FUEL_DATA_SWR_KEY, type FuelResponse } from "@/hooks/use-fuel-data"
+import { useCrlvAnalise } from "@/hooks/use-crlv-analise"
+import { findCrlvFile, getCrlvValidade } from "@/lib/crlv-validade"
 import { isVehicleDueForReview } from "@/lib/fleet-maintenance"
-import { isAgregadoVehicle } from "@/lib/vehicle-classification"
+import { isAgregadoVehicle, isVisibleInFrotaSection } from "@/lib/vehicle-classification"
 import { getFuelFinancialPostingCycleBounds } from "@/lib/fuel-billing"
 import { isSameMonth } from "@/lib/fornecedores"
 import {
@@ -101,6 +104,11 @@ const statCardVariants: Record<string, { cardClass: string; iconClass: string; g
     iconClass: "border-[#edb7c0] bg-[#ffe6ea] text-[#b93449]",
     glowClass: "bg-[#e9a8b1]/22",
   },
+  "CRLV Vencidos": {
+    cardClass: "border-[#f2c9c9] bg-[linear-gradient(180deg,#fff0f0_0%,#fde2e2_100%)] shadow-[0_10px_24px_rgba(200,60,60,0.12)]",
+    iconClass: "border-[#f3b0b0] bg-[#ffe4e4] text-[#c0262d]",
+    glowClass: "bg-[#f19c9c]/24",
+  },
   "Veículos Agregados": {
     cardClass: "border-[#c9e6f6] bg-[linear-gradient(180deg,#edf9ff_0%,#e1f3fb_100%)] shadow-[0_10px_24px_rgba(15,142,207,0.10)]",
     iconClass: "border-[#a7d8f0] bg-[#def4ff] text-[#095f89]",
@@ -154,6 +162,7 @@ const statCardVariants: Record<string, { cardClass: string; iconClass: string; g
 }
 
 export function StatsCards({ vehicles, multas, ordens = [] }: StatsCardsProps) {
+  useCrlvAnalise(vehicles)
   const { monthlyTotal: monthlyFuelTotal, reportDate, lastImportedAt } = useFuelDataContext()
   const billingCycle = useMemo(() => getFuelFinancialPostingCycleBounds(reportDate), [reportDate])
   const billingCycleKey = useMemo(() => {
@@ -192,6 +201,12 @@ export function StatsCards({ vehicles, multas, ordens = [] }: StatsCardsProps) {
     const naOficina = fleetVehicles.filter((vehicle) => vehicle.naOficina).length
     const paraRevisao = fleetVehicles.filter((vehicle) => isVehicleDueForReview(vehicle)).length
     const contratosVencendoFrota = countExpiringContracts(fleetVehicles)
+    const crlvValidades = vehicles
+      .filter(isVisibleInFrotaSection)
+      .map((vehicle) => ({ vehicle, validade: getCrlvValidade(vehicle.placa, findCrlvFile(vehicle)) }))
+    const crlvVencidos = crlvValidades.filter((item) => item.validade?.status === "vencido")
+    const crlvVencidosProprios = crlvVencidos.filter((item) => item.vehicle.tipoPropriedade !== "alugado").length
+    const crlvVencendo = crlvValidades.filter((item) => item.validade?.status === "vencendo").length
     const multasRecentes = filterRecentMultas(multas, MULTAS_PAINEL_JANELA_DIAS)
     const multasTratadas = multasRecentes.filter((multa) => multa.tratativa === "tratada")
     const valorTotalMultas = multasRecentes.reduce((sum, multa) => sum + multa.valorFaturado, 0)
@@ -270,6 +285,18 @@ export function StatsCards({ vehicles, multas, ordens = [] }: StatsCardsProps) {
           color: "bg-destructive/10 text-destructive",
         },
         {
+          label: "CRLV Vencidos",
+          value: crlvVencidos.length.toString(),
+          helperText:
+            crlvVencidos.length > 0
+              ? `${crlvVencidosProprios} próprio(s) · ${crlvVencidos.length - crlvVencidosProprios} alugado(s)`
+              : "Nenhum CRLV vencido",
+          secondaryHelperText: `${crlvVencendo} ${crlvVencendo === 1 ? "vence" : "vencem"} nos próximos 30 dias`,
+          icon: FileWarning,
+          color: "bg-red-500/10 text-red-600",
+          href: "/dashboard/documentos",
+        },
+        {
           label: "Faturamento Mensal",
           value: formatCurrency(billingCycleFuelTotal),
           helperText: `Ciclo ${formatShortDate(billingCycle.start)} a ${formatShortDate(billingCycle.end)}`,
@@ -335,8 +362,15 @@ export function StatsCards({ vehicles, multas, ordens = [] }: StatsCardsProps) {
   const renderStatCard = (stat: (typeof stats.primary)[number] | (typeof stats.secondary)[number]) => {
     const variant = statCardVariants[stat.label] ?? statCardVariants.Colaboradores
 
-    return (
-      <Card key={stat.label} className={cn("relative overflow-hidden rounded-[1.35rem] border", variant.cardClass)}>
+    const card = (
+      <Card
+        key={stat.label}
+        className={cn(
+          "relative overflow-hidden rounded-[1.35rem] border",
+          variant.cardClass,
+          "href" in stat ? "h-full transition-transform hover:-translate-y-0.5" : null
+        )}
+      >
         <div className={cn("absolute -right-3 -top-3 h-12 w-12 rounded-full blur-2xl", variant.glowClass)} />
         <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(255,255,255,0.7),rgba(255,255,255,0),rgba(255,255,255,0.55))]" />
         <CardContent className="relative flex min-h-[98px] items-start gap-3 p-4 sm:p-4.5">
@@ -357,6 +391,14 @@ export function StatsCards({ vehicles, multas, ordens = [] }: StatsCardsProps) {
           </div>
         </CardContent>
       </Card>
+    )
+
+    return "href" in stat && stat.href ? (
+      <Link key={stat.label} href={stat.href} title="Abrir Documentos > CRLV" className="block">
+        {card}
+      </Link>
+    ) : (
+      card
     )
   }
 

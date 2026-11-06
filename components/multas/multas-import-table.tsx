@@ -1,10 +1,11 @@
 "use client"
 
 import { useMemo, useState, type ReactNode } from "react"
-import { Search } from "lucide-react"
+import { FileText, Loader2, Pencil, RotateCcw, Search, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -62,16 +63,53 @@ function DescontoValue({ value }: { value: number | null }) {
   return <span className="font-semibold text-[#2f6b2a]">{formatMultaCurrency(value)}</span>
 }
 
+function OrigemBadge({ record }: { record: MultaImportada }) {
+  if (record.origem === "manual") {
+    return (
+      <span className="rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0 text-[0.65rem] font-semibold text-violet-700">
+        Manual
+      </span>
+    )
+  }
+  if (record.editadoEm) {
+    return (
+      <span
+        className="rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0 text-[0.65rem] font-semibold text-sky-700"
+        title={`Editada em ${new Date(record.editadoEm).toLocaleString("pt-BR")}${record.editadoPor ? ` por ${record.editadoPor}` : ""}`}
+      >
+        Editada
+      </span>
+    )
+  }
+  return null
+}
+
+export type MultaRowActions = {
+  onEdit: (record: MultaImportada) => void
+  onRestaurar: (record: MultaImportada) => Promise<void>
+  onDelete: (record: MultaImportada) => Promise<void>
+  onTermo: (record: MultaImportada) => Promise<void>
+}
+
+/** "DESCONTO ENVIADO PARA O RH NO DIA 06/04/2026", igual ao texto usado na planilha. */
+export function envioRhTexto(record: MultaImportada): string | null {
+  return record.envioRhEm ? `Desconto enviado para o RH no dia ${formatMultaDate(record.envioRhEm)}` : null
+}
+
 type MultasImportTableProps = {
   records: MultaImportada[]
   tratativaFilter: "todas" | MultaTratativa
   onTratativaFilterChange: (value: "todas" | MultaTratativa) => void
+  /** Quando informado, habilita editar/restaurar/excluir. */
+  actions?: MultaRowActions
+  headerAction?: ReactNode
 }
 
-export function MultasImportTable({ records, tratativaFilter, onTratativaFilterChange }: MultasImportTableProps) {
+export function MultasImportTable({ records, tratativaFilter, onTratativaFilterChange, actions, headerAction }: MultasImportTableProps) {
   const [search, setSearch] = useState("")
   const [gravidadeFilter, setGravidadeFilter] = useState<"todas" | MultaGravidadeImportada>("todas")
-  const [selected, setSelected] = useState<MultaImportada | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selected = useMemo(() => records.find((record) => record.id === selectedId) ?? null, [records, selectedId])
 
   const tratativaCounts = useMemo(() => {
     const counts = new Map<MultaTratativa, number>()
@@ -141,6 +179,7 @@ export function MultasImportTable({ records, tratativaFilter, onTratativaFilterC
                 ))}
               </SelectContent>
             </Select>
+            {headerAction}
           </div>
         </div>
 
@@ -191,6 +230,7 @@ export function MultasImportTable({ records, tratativaFilter, onTratativaFilterC
                 <TableHead>Situação da indicação</TableHead>
                 <TableHead className="text-right">Faturado</TableHead>
                 <TableHead className="text-right">Desconto RH</TableHead>
+                {actions ? <TableHead className="w-[92px]" /> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -199,14 +239,17 @@ export function MultasImportTable({ records, tratativaFilter, onTratativaFilterC
                   key={record.id}
                   className="cursor-pointer align-top"
                   style={{ boxShadow: `inset 4px 0 0 ${MULTA_TRATATIVA_COLORS[record.tratativa].solid}` }}
-                  onClick={() => setSelected(record)}
+                  onClick={() => setSelectedId(record.id)}
                 >
                   <TableCell>
                     <TratativaBadge tratativa={record.tratativa} />
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-sm text-slate-700">{formatMultaDate(record.dataInfracao, true)}</TableCell>
                   <TableCell>
-                    <div className="font-semibold text-slate-900">{record.placa}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-900">{record.placa}</span>
+                      <OrigemBadge record={record} />
+                    </div>
                     <div className="max-w-[200px] truncate text-xs text-slate-500" title={record.modelo}>
                       {record.modelo || "-"}
                     </div>
@@ -240,12 +283,49 @@ export function MultasImportTable({ records, tratativaFilter, onTratativaFilterC
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-right">
                     <DescontoValue value={record.descontoRh} />
+                    {record.envioRhEm ? (
+                      <div className="mt-0.5 text-[0.7rem] font-medium text-emerald-700" title={envioRhTexto(record) ?? undefined}>
+                        Enviado ao RH {formatMultaDate(record.envioRhEm)}
+                      </div>
+                    ) : null}
                   </TableCell>
+                  {actions ? (
+                    <TableCell className="whitespace-nowrap text-right">
+                      {record.condutor ? (
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-slate-500 hover:text-slate-900"
+                          title="Gerar termo de desconto (PDF)"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            void actions.onTermo(record)
+                          }}
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-slate-500 hover:text-slate-900"
+                        title="Editar multa"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          actions.onEdit(record)
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  ) : null}
                 </TableRow>
               ))}
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={actions ? 9 : 8} className="py-10 text-center text-sm text-muted-foreground">
                     Nenhuma multa encontrada com os filtros atuais.
                   </TableCell>
                 </TableRow>
@@ -255,7 +335,7 @@ export function MultasImportTable({ records, tratativaFilter, onTratativaFilterC
         </div>
       </CardContent>
 
-      <MultaImportadaDetailDialog record={selected} onOpenChange={(open) => !open && setSelected(null)} />
+      <MultaImportadaDetailDialog record={selected} actions={actions} onOpenChange={(open) => !open && setSelectedId(null)} />
     </Card>
   )
 }
@@ -269,9 +349,37 @@ function DetailField({ label, value, className }: { label: string; value: ReactN
   )
 }
 
-function MultaImportadaDetailDialog({ record, onOpenChange }: { record: MultaImportada | null; onOpenChange: (open: boolean) => void }) {
+function MultaImportadaDetailDialog({
+  record,
+  actions,
+  onOpenChange,
+}: {
+  record: MultaImportada | null
+  actions?: MultaRowActions
+  onOpenChange: (open: boolean) => void
+}) {
+  const [busy, setBusy] = useState<"restaurar" | "excluir" | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const run = async (kind: "restaurar" | "excluir", action: () => Promise<void>) => {
+    setBusy(kind)
+    try {
+      await action()
+      if (kind === "excluir") onOpenChange(false)
+    } finally {
+      setBusy(null)
+      setConfirmDelete(false)
+    }
+  }
+
   return (
-    <Dialog open={!!record} onOpenChange={onOpenChange}>
+    <Dialog
+      open={!!record}
+      onOpenChange={(open) => {
+        if (!open) setConfirmDelete(false)
+        onOpenChange(open)
+      }}
+    >
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         {record ? (
           <>
@@ -279,7 +387,16 @@ function MultaImportadaDetailDialog({ record, onOpenChange }: { record: MultaImp
               <div className="flex flex-wrap items-center gap-2">
                 <TratativaBadge tratativa={record.tratativa} />
                 <Badge variant="outline">{record.tipoRegistro === "MULTA" ? "Multa" : "Notificação"}</Badge>
-                <span className="text-xs text-slate-400">Linha {record.linha} da planilha</span>
+                <OrigemBadge record={record} />
+                <span className="text-xs text-slate-400">
+                  {record.origem === "manual" ? "Cadastrada no sistema" : `Linha ${record.linha} da planilha`}
+                  {record.editadoEm
+                    ? ` · ${record.origem === "manual" ? "salva" : "editada"} em ${new Date(record.editadoEm).toLocaleString("pt-BR", {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}${record.editadoPor ? ` por ${record.editadoPor}` : ""}`
+                    : ""}
+                </span>
               </div>
               <DialogTitle className="text-xl">
                 {record.placa} · {record.descricaoInfracao || "Infração"}
@@ -298,6 +415,7 @@ function MultaImportadaDetailDialog({ record, onOpenChange }: { record: MultaImp
                   <DetailField label="Gravidade" value={<GravidadeBadge gravidade={record.gravidade} />} />
                   <DetailField label="Pontos" value={record.pontos ?? "-"} />
                   <DetailField label="Órgão" value={record.orgao} />
+                  {record.localInfracao ? <DetailField label="Local da infração" value={record.localInfracao} className="sm:col-span-3" /> : null}
                 </div>
               </section>
 
@@ -321,6 +439,17 @@ function MultaImportadaDetailDialog({ record, onOpenChange }: { record: MultaImp
                   <DetailField label="Valor NIC" value={formatMultaCurrency(record.valorNic)} />
                   <DetailField label="Valor faturado" value={<strong>{formatMultaCurrency(record.valorFaturado)}</strong>} />
                   <DetailField label="Desconto RH" value={<DescontoValue value={record.descontoRh} />} />
+                  <DetailField
+                    label="Envio ao RH"
+                    className="sm:col-span-4"
+                    value={
+                      record.envioRhEm ? (
+                        <span className="font-semibold uppercase text-emerald-700">{envioRhTexto(record)}</span>
+                      ) : (
+                        <span className="text-slate-400">Desconto ainda não enviado ao RH</span>
+                      )
+                    }
+                  />
                 </div>
               </section>
 
@@ -331,6 +460,77 @@ function MultaImportadaDetailDialog({ record, onOpenChange }: { record: MultaImp
                 </section>
               ) : null}
             </div>
+
+            {actions ? (
+              <DialogFooter className="flex-wrap gap-2 sm:justify-between">
+                <div className="flex flex-wrap gap-2">
+                  {record.origem === "manual" ? (
+                    confirmDelete ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          disabled={busy !== null}
+                          onClick={() => run("excluir", () => actions.onDelete(record))}
+                          className="gap-2"
+                        >
+                          {busy === "excluir" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                          Confirmar exclusão
+                        </Button>
+                        <Button type="button" variant="ghost" disabled={busy !== null} onClick={() => setConfirmDelete(false)}>
+                          Cancelar
+                        </Button>
+                      </>
+                    ) : (
+                      <Button type="button" variant="outline" className="gap-2 text-red-600 hover:text-red-700" onClick={() => setConfirmDelete(true)}>
+                        <Trash2 className="h-4 w-4" />
+                        Excluir
+                      </Button>
+                    )
+                  ) : record.editadoEm ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2"
+                      disabled={busy !== null}
+                      title="Descarta as alterações feitas no sistema e volta aos valores da planilha"
+                      onClick={() => run("restaurar", () => actions.onRestaurar(record))}
+                    >
+                      {busy === "restaurar" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                      Restaurar valores da planilha
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {record.condutor ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2"
+                      disabled={busy !== null}
+                      onClick={() => {
+                        onOpenChange(false)
+                        void actions.onTermo(record)
+                      }}
+                    >
+                      <FileText className="h-4 w-4" />
+                      Termo de desconto (PDF)
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    className="gap-2 bg-[#4f8f57] hover:bg-[#437a4a]"
+                    onClick={() => {
+                      onOpenChange(false)
+                      actions.onEdit(record)
+                    }}
+                  >
+                    <Pencil className="h-4 w-4" />
+                    Editar
+                  </Button>
+                </div>
+              </DialogFooter>
+            ) : null}
           </>
         ) : null}
       </DialogContent>

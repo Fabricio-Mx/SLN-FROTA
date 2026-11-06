@@ -275,6 +275,10 @@ const fetcher = async (): Promise<Vehicle[]> => {
   })
 }
 
+export function refreshVehiclesCache(): Promise<unknown> {
+  return mutate(SWR_KEY)
+}
+
 export function useVehicles(enabled = true) {
   const { data, error, isLoading } = useSWR<Vehicle[]>(enabled ? SWR_KEY : null, fetcher, SWR_OPTIONS)
   const vehicles = data ?? []

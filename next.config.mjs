@@ -8,6 +8,7 @@ const nextConfig = {
   },
   outputFileTracingIncludes: {
     "/api/agregados/export": ["./public/templates/**"],
+    "/api/multas/termo": ["./termo/logo-sln.jpeg"],
   },
 }
 

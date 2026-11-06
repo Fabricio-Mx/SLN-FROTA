@@ -12,19 +12,22 @@ import {
   Gauge,
   HandCoins,
   Loader2,
+  Plus,
   ShieldAlert,
   TrendingDown,
   Upload,
 } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
-import { useMultasImportadas } from "@/hooks/use-multas-importadas"
+import { baixarTermoDesconto, useMultasImportadas } from "@/hooks/use-multas-importadas"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { MultasImportTable, formatMultaCurrency, formatMultaDate } from "@/components/multas/multas-import-table"
+import { MultaFormDialog } from "@/components/multas/multa-form-dialog"
+import { MultasImportTable, formatMultaCurrency, formatMultaDate, type MultaRowActions } from "@/components/multas/multas-import-table"
 import { downloadMultasWorkbook } from "@/lib/multas-import-export"
 import {
   MULTA_FONTE_LABELS,
@@ -36,8 +39,10 @@ import {
   MULTA_TRATATIVA_DESCRIPTIONS,
   MULTA_TRATATIVA_LABELS,
   MULTA_TRATATIVA_ORDER,
+  getMultasDaFonte,
   normalizeMultaSearchText,
   parseMultaLocalDate,
+  type MultaCamposEditaveis,
   type MultaFonte,
   type MultaImportada,
   type MultaTratativa,
@@ -208,18 +213,178 @@ function RankingCard({
 }
 
 export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; canManage: boolean }) {
-  const { store, isLoading, error, warning, importFile } = useMultasImportadas()
+  const { store, isLoading, error, warning, importFile, saveMulta, restaurarMulta, patchMulta, deleteMulta } = useMultasImportadas()
   const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("todo")
   const [customStart, setCustomStart] = useState("")
   const [customEnd, setCustomEnd] = useState("")
   const [tratativaFilter, setTratativaFilter] = useState<"todas" | MultaTratativa>("todas")
   const [isImporting, setIsImporting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<MultaImportada | null>(null)
+  const [localPrompt, setLocalPrompt] = useState<{ id: string; placa: string; ait: string } | null>(null)
+  const [localValue, setLocalValue] = useState("")
+  const [savingLocal, setSavingLocal] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const batch = store?.batches[fonte] ?? null
+  const allRecords = useMemo(() => getMultasDaFonte(store, fonte), [fonte, store])
+  const manuaisCount = useMemo(() => allRecords.filter((record) => record.origem === "manual").length, [allRecords])
   const isSupported = MULTA_FONTES_SUPORTADAS.includes(fonte)
   const periodRange = useMemo(() => resolvePeriodRange(periodPreset, customStart, customEnd), [customEnd, customStart, periodPreset])
+
+  const notifyDriveError = (driveError: string | null) => {
+    if (driveError) toast({ title: "Salvo apenas localmente", description: driveError, variant: "destructive" })
+  }
+
+  const gerarTermo = async (id: string) => {
+    try {
+      const pendencias = await baixarTermoDesconto(id)
+      toast(
+        pendencias.length > 0
+          ? {
+              title: "Termo gerado com campos em branco",
+              description: `Não encontrei: ${pendencias.join(" e ")}. Complete o cadastro ou preencha à mão.`,
+              variant: "destructive",
+            }
+          : { title: "Termo de desconto gerado", description: "O PDF foi baixado." },
+      )
+    } catch (err) {
+      toast({ title: "Falha ao gerar o termo", description: err instanceof Error ? err.message : "Erro desconhecido", variant: "destructive" })
+    }
+  }
+
+  /** O local não vem na planilha: se estiver vazio, pede antes de gerar o termo. */
+  const solicitarTermo = async (record: { id: string; placa: string; ait: string; localInfracao?: string }) => {
+    if (record.localInfracao?.trim()) {
+      await gerarTermo(record.id)
+      return
+    }
+    setLocalValue("")
+    setLocalPrompt({ id: record.id, placa: record.placa, ait: record.ait })
+  }
+
+  const confirmarLocal = async (salvar: boolean) => {
+    if (!localPrompt) return
+    setSavingLocal(true)
+    try {
+      if (salvar && localValue.trim()) {
+        notifyDriveError((await patchMulta(localPrompt.id, { localInfracao: localValue.trim() })).driveError)
+      }
+      const id = localPrompt.id
+      setLocalPrompt(null)
+      await gerarTermo(id)
+    } catch (err) {
+      toast({ title: "Falha ao salvar o local", description: err instanceof Error ? err.message : "Erro desconhecido", variant: "destructive" })
+    } finally {
+      setSavingLocal(false)
+    }
+  }
+
+  const openNewMulta = () => {
+    setEditing(null)
+    setFormOpen(true)
+  }
+
+  const rowActions: MultaRowActions | undefined = canManage
+    ? {
+        onEdit: (record) => {
+          setEditing(record)
+          setFormOpen(true)
+        },
+        onRestaurar: async (record) => {
+          try {
+            notifyDriveError((await restaurarMulta(record.id)).driveError)
+            toast({ title: "Multa restaurada", description: `${record.placa}: valores da planilha restaurados.` })
+          } catch (err) {
+            toast({ title: "Falha ao restaurar", description: err instanceof Error ? err.message : "Erro desconhecido", variant: "destructive" })
+          }
+        },
+        onDelete: async (record) => {
+          try {
+            notifyDriveError((await deleteMulta(record.id)).driveError)
+            toast({ title: "Multa excluída", description: `${record.placa} removida.` })
+          } catch (err) {
+            toast({ title: "Falha ao excluir", description: err instanceof Error ? err.message : "Erro desconhecido", variant: "destructive" })
+          }
+        },
+        onTermo: (record) => solicitarTermo(record),
+      }
+    : undefined
+
+  const handleSubmitMulta = async (campos: MultaCamposEditaveis, gerarTermoAoSalvar: boolean) => {
+    const { driveError, recordId } = await saveMulta(fonte, campos, editing?.id)
+    notifyDriveError(driveError)
+    toast({
+      title: editing ? "Multa atualizada" : "Multa cadastrada",
+      description: `${campos.placa}${campos.descricaoInfracao ? ` · ${campos.descricaoInfracao}` : ""}`,
+    })
+    if (gerarTermoAoSalvar && recordId) {
+      await solicitarTermo({ id: recordId, placa: campos.placa, ait: campos.ait, localInfracao: campos.localInfracao })
+    }
+  }
+
+  const novaMultaButton = canManage ? (
+    <Button type="button" className="gap-2 bg-[#4f8f57] hover:bg-[#437a4a]" onClick={openNewMulta}>
+      <Plus className="h-4 w-4" />
+      Nova multa
+    </Button>
+  ) : null
+
+  const multaForm = (
+    <>
+      <MultaFormDialog
+        open={formOpen}
+        onOpenChange={(open) => {
+          setFormOpen(open)
+          if (!open) setEditing(null)
+        }}
+        fonte={fonte}
+        record={editing}
+        sugestoes={allRecords}
+        onSubmit={handleSubmitMulta}
+      />
+      <Dialog open={!!localPrompt} onOpenChange={(open) => !open && !savingLocal && setLocalPrompt(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Local da infração</DialogTitle>
+            <DialogDescription>
+              {localPrompt ? `${localPrompt.placa}${localPrompt.ait ? ` · AIT ${localPrompt.ait}` : ""}. ` : ""}
+              A planilha não traz o local da infração. Informe como está na notificação para sair no termo — ele fica salvo na multa.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            id="multa-local-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void confirmarLocal(true)
+            }}
+          >
+            <Input
+              autoFocus
+              value={localValue}
+              onChange={(event) => setLocalValue(event.target.value)}
+              placeholder="Ex.: MGC491 KM 75,40 GUAXUPE - BORDO DIREITO - FX1 - DECRESCENTE"
+            />
+          </form>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="ghost" disabled={savingLocal} onClick={() => void confirmarLocal(false)}>
+              Gerar sem o local
+            </Button>
+            <Button
+              type="submit"
+              form="multa-local-form"
+              disabled={savingLocal || !localValue.trim()}
+              className="gap-2 bg-[#4f8f57] hover:bg-[#437a4a]"
+            >
+              {savingLocal ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Salvar e gerar termo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
 
   const periodLabel = useMemo(() => {
     if (!periodRange) return PERIOD_LABELS.todo
@@ -227,7 +392,7 @@ export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; can
   }, [periodRange])
 
   const periodRecords = useMemo(() => {
-    const records = batch?.records ?? []
+    const records = allRecords
     const filtered = periodRange
       ? records.filter((record) => {
           const date = parseMultaLocalDate(record.dataInfracao)
@@ -236,7 +401,7 @@ export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; can
       : records
 
     return [...filtered].sort((left, right) => (right.dataInfracao ?? "").localeCompare(left.dataInfracao ?? ""))
-  }, [batch, periodRange])
+  }, [allRecords, periodRange])
 
   const stats = useMemo(() => {
     let valorFaturado = 0
@@ -304,7 +469,7 @@ export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; can
   const deadlines = useMemo(() => {
     const today = new Date()
     const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-    const pending = (batch?.records ?? []).filter((record) => normalizeMultaSearchText(record.situacaoIndicacao).startsWith("pendente"))
+    const pending = allRecords.filter((record) => normalizeMultaSearchText(record.situacaoIndicacao).startsWith("pendente"))
 
     const upcoming = pending
       .map((record) => ({ record, limit: parseMultaLocalDate(record.dataLimiteEnvio) }))
@@ -312,10 +477,10 @@ export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; can
       .sort((left, right) => left.limit.getTime() - right.limit.getTime())
       .map((item) => ({ ...item, days: Math.round((item.limit.getTime() - startOfToday.getTime()) / 86_400_000) }))
 
-    const expired = (batch?.records ?? []).filter((record) => normalizeMultaSearchText(record.situacaoIndicacao).includes("expirado")).length
+    const expired = allRecords.filter((record) => normalizeMultaSearchText(record.situacaoIndicacao).includes("expirado")).length
 
     return { upcoming, expired, pendingTotal: pending.length }
-  }, [batch])
+  }, [allRecords])
 
   const situacoes = useMemo(
     () => groupTop(periodRecords, (record) => record.situacaoIndicacao || "Não informado", (record) => record.valorFaturado, 8),
@@ -399,7 +564,7 @@ export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; can
     return <div className="h-40 animate-pulse rounded-2xl border border-border bg-muted/40" />
   }
 
-  if (!batch) {
+  if (!batch && allRecords.length === 0) {
     return (
       <Card className={CARD_CLASS}>
         <CardContent className="flex flex-col items-center gap-4 px-6 py-14 text-center">
@@ -410,14 +575,18 @@ export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; can
             <h3 className="text-lg font-semibold text-slate-900">{FONTE_DESCRIPTIONS[fonte]}</h3>
             <p className="mx-auto max-w-xl text-sm text-slate-500">
               {isSupported
-                ? "Nenhuma planilha importada ainda. Importe o relatório de infrações (.xlsx): as cores das linhas definem o status da tratativa — verde (tratada), azul (em tratativa) e laranja (análise ou perda)."
-                : "O modelo da planilha de carros próprios ainda não foi configurado. Assim que a planilha for enviada, a importação será habilitada aqui com o mesmo painel."}
+                ? "Nenhuma planilha importada ainda. Importe o relatório de infrações (.xlsx): as cores das linhas definem o status da tratativa — verde (tratada), azul (em tratativa) e laranja (análise ou perda). Você também pode cadastrar multas manualmente."
+                : "O modelo da planilha de carros próprios ainda não foi configurado. Enquanto isso, cadastre as multas manualmente pelo botão \"Nova multa\"."}
             </p>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
           </div>
-          {importButton}
-          {!canManage && isSupported ? <p className="text-xs text-slate-400">Seu perfil não tem permissão para importar.</p> : null}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {importButton}
+            {novaMultaButton}
+          </div>
+          {!canManage ? <p className="text-xs text-slate-400">Seu perfil não tem permissão para importar ou cadastrar multas.</p> : null}
         </CardContent>
+        {multaForm}
       </Card>
     )
   }
@@ -437,9 +606,16 @@ export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; can
               <div>
                 <h3 className="text-lg font-semibold text-slate-900">{FONTE_DESCRIPTIONS[fonte]}</h3>
                 <p className="text-xs text-slate-500">
-                  Última importação: <span className="font-medium text-slate-700">{batch.fileName}</span> ·{" "}
-                  {new Date(batch.importedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
-                  {batch.importedBy ? ` · por ${batch.importedBy}` : ""} · {batch.records.length} registros
+                  {batch ? (
+                    <>
+                      Última importação: <span className="font-medium text-slate-700">{batch.fileName}</span> ·{" "}
+                      {new Date(batch.importedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                      {batch.importedBy ? ` · por ${batch.importedBy}` : ""} · {batch.records.length} registros
+                    </>
+                  ) : (
+                    "Nenhuma planilha importada"
+                  )}
+                  {manuaisCount > 0 ? ` · ${manuaisCount} cadastrada(s) manualmente` : ""}
                 </p>
               </div>
             </div>
@@ -506,12 +682,12 @@ export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; can
             </div>
           </div>
 
-          {warning || batch.warnings.length > 0 ? (
+          {warning || (batch?.warnings.length ?? 0) > 0 ? (
             <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <div className="space-y-0.5">
                 {warning ? <p>{warning}</p> : null}
-                {batch.warnings.slice(0, 4).map((item) => (
+                {(batch?.warnings ?? []).slice(0, 4).map((item) => (
                   <p key={item}>{item}</p>
                 ))}
               </div>
@@ -749,7 +925,14 @@ export function MultasImportPanel({ fonte, canManage }: { fonte: MultaFonte; can
         <RankingCard title="Veículos" description="Placas com mais multas no período" items={topPlacas} color="#3b7dd8" />
       </div>
 
-      <MultasImportTable records={periodRecords} tratativaFilter={tratativaFilter} onTratativaFilterChange={setTratativaFilter} />
+      <MultasImportTable
+        records={periodRecords}
+        tratativaFilter={tratativaFilter}
+        onTratativaFilterChange={setTratativaFilter}
+        actions={rowActions}
+        headerAction={novaMultaButton}
+      />
+      {multaForm}
     </div>
   )
 }

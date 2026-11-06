@@ -51,6 +51,8 @@ const COLUMNS: Array<{ header: string; width: number; value: (record: MultaImpor
   { header: "Valor NIC", width: 12, value: (record) => record.valorNic, format: '"R$" #,##0.00' },
   { header: "Valor faturado", width: 14, value: (record) => record.valorFaturado, format: '"R$" #,##0.00' },
   { header: "Desconto RH", width: 13, value: (record) => record.descontoRh, format: '"R$" #,##0.00' },
+  { header: "Envio ao RH", width: 13, value: (record) => toExcelDate(record.envioRhEm ?? null), format: "dd/mm/yyyy" },
+  { header: "Local da infração", width: 36, value: (record) => record.localInfracao ?? "" },
   { header: "Observações", width: 50, value: (record) => record.observacoes },
 ]
 

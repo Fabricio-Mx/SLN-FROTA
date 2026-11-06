@@ -1,7 +1,20 @@
 "use client"
 
 import { useMemo, useRef, useState } from "react"
-import { Download, Eye, FileText, IdCard, Loader2, Search, ScrollText, Upload } from "lucide-react"
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Download,
+  Eye,
+  FileText,
+  IdCard,
+  Loader2,
+  RefreshCw,
+  Search,
+  ScrollText,
+  Upload,
+} from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,10 +30,15 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { useColaboradores } from "@/hooks/use-colaboradores"
+import { useCrlvAnalise } from "@/hooks/use-crlv-analise"
 import { useVehicles } from "@/hooks/use-vehicles"
 import type { Colaborador, DriveFile, Vehicle } from "@/lib/types"
+import { findCrlvFile, getCrlvValidade, type CrlvValidade } from "@/lib/crlv-validade"
+import { isVisibleInFrotaSection } from "@/lib/vehicle-classification"
 
 type DocumentoTipo = "crlv" | "cnh" | "termo"
+
+type CrlvPropriedade = "proprio" | "alugado"
 
 type DocumentoRow = {
   key: string
@@ -29,6 +47,8 @@ type DocumentoRow = {
   subtitulo: string
   detalhe: string
   arquivo: DriveFile | null
+  propriedade?: CrlvPropriedade
+  validade?: CrlvValidade | null
 }
 
 function normalize(value: string): string {
@@ -51,14 +71,20 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function buildCrlvRows(vehicles: Vehicle[]): DocumentoRow[] {
-  return vehicles.map((vehicle) => ({
-    key: vehicle.id,
-    tipo: "crlv" as DocumentoTipo,
-    titulo: vehicle.placa,
-    subtitulo: vehicle.modelo,
-    detalhe: `Renavam: ${vehicle.renavan || "-"}`,
-    arquivo: findByName([...(vehicle.imagens ?? []), ...(vehicle.checklists ?? [])], "CRLV"),
-  }))
+  // Agregados pertencem ao colaborador; o CRLV lista apenas os veículos da aba "Veículos Frota".
+  return vehicles.filter(isVisibleInFrotaSection).map((vehicle) => {
+    const arquivo = findCrlvFile(vehicle)
+    return {
+      key: vehicle.id,
+      tipo: "crlv" as DocumentoTipo,
+      titulo: vehicle.placa,
+      subtitulo: vehicle.modelo,
+      detalhe: `Renavam: ${vehicle.renavan || "-"}`,
+      arquivo,
+      propriedade: (vehicle.tipoPropriedade === "alugado" ? "alugado" : "proprio") as CrlvPropriedade,
+      validade: getCrlvValidade(vehicle.placa, arquivo),
+    }
+  })
 }
 
 function buildCnhRows(colaboradores: Colaborador[]): DocumentoRow[] {
@@ -159,9 +185,67 @@ type DocumentosTableProps = {
   canManage: boolean
   uploadingKey: string | null
   onUpload: (row: DocumentoRow, file: File) => void
+  mostrarValidade?: boolean
+  analisando?: boolean
 }
 
-function DocumentosTable({ rows, colunaTitulo, vazio, canManage, uploadingKey, onUpload }: DocumentosTableProps) {
+function ValidadeCell({ validade, analisando }: { validade: CrlvValidade | null | undefined; analisando: boolean }) {
+  if (!validade) return <span className="text-[0.75rem] text-muted-foreground">-</span>
+
+  if (validade.status === "nao_analisado") {
+    return (
+      <Badge variant="outline" className="gap-1 border-slate-200 bg-slate-100 text-slate-600">
+        {analisando ? <Loader2 className="h-3 w-3 animate-spin" /> : <Clock className="h-3 w-3" />}
+        {analisando ? "Analisando..." : validade.mensagem}
+      </Badge>
+    )
+  }
+
+  if (validade.status === "erro") {
+    return (
+      <Badge variant="outline" className="gap-1 border-slate-200 bg-slate-100 text-slate-600" title={validade.mensagem}>
+        <AlertTriangle className="h-3 w-3" />
+        Não foi possível ler o PDF
+      </Badge>
+    )
+  }
+
+  const estilo =
+    validade.status === "vencido"
+      ? { className: "border-red-200 bg-red-50 text-red-700", Icon: AlertTriangle }
+      : validade.status === "vencendo"
+        ? { className: "border-amber-200 bg-amber-50 text-amber-700", Icon: Clock }
+        : { className: "border-emerald-200 bg-emerald-50 text-emerald-700", Icon: CheckCircle2 }
+
+  return (
+    <div className="space-y-1">
+      <Badge variant="outline" className={`gap-1 ${estilo.className}`}>
+        <estilo.Icon className="h-3 w-3" />
+        {validade.mensagem}
+      </Badge>
+      <div className="text-[0.72rem] text-muted-foreground">
+        Exercício {validade.exercicio} • {validade.uf || "UF ?"}
+        {validade.calendarioUf && validade.calendarioUf !== validade.uf ? ` (calendário ${validade.calendarioUf})` : ""}
+      </div>
+      {validade.placaDivergente ? (
+        <div className="text-[0.72rem] font-medium text-red-600">Placa do PDF diferente do veículo</div>
+      ) : null}
+    </div>
+  )
+}
+
+function DocumentosTable({
+  rows,
+  colunaTitulo,
+  vazio,
+  canManage,
+  uploadingKey,
+  onUpload,
+  mostrarValidade = false,
+  analisando = false,
+}: DocumentosTableProps) {
+  const colunas = mostrarValidade ? 5 : 4
+
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
       <Table className="min-w-[720px]">
@@ -170,13 +254,14 @@ function DocumentosTable({ rows, colunaTitulo, vazio, canManage, uploadingKey, o
             <TableHead className="text-[0.88rem] font-semibold">{colunaTitulo}</TableHead>
             <TableHead className="text-[0.88rem] font-semibold">Detalhes</TableHead>
             <TableHead className="text-[0.88rem] font-semibold">Arquivo</TableHead>
+            {mostrarValidade ? <TableHead className="text-[0.88rem] font-semibold">Validade</TableHead> : null}
             <TableHead className="w-[300px] text-center text-[0.88rem] font-semibold">Ações</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={colunas} className="py-10 text-center text-sm text-muted-foreground">
                 {vazio}
               </TableCell>
             </TableRow>
@@ -198,6 +283,11 @@ function DocumentosTable({ rows, colunaTitulo, vazio, canManage, uploadingKey, o
                   </Badge>
                 )}
               </TableCell>
+              {mostrarValidade ? (
+                <TableCell>
+                  <ValidadeCell validade={row.validade} analisando={analisando} />
+                </TableCell>
+              ) : null}
               <TableCell>
                 <div className="flex flex-wrap items-center justify-center gap-1.5">
                   {row.arquivo ? (
@@ -244,14 +334,37 @@ type DocumentosPanelProps = {
 export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
   const { vehicles, updateVehicle } = useVehicles(true)
   const { colaboradores, updateColaborador } = useColaboradores(true)
+  const { analisando, reanalisar } = useCrlvAnalise(vehicles)
 
   const [search, setSearch] = useState("")
   const [somentePendentes, setSomentePendentes] = useState(false)
+  const [somenteVencidos, setSomenteVencidos] = useState(false)
+  const [crlvPropriedade, setCrlvPropriedade] = useState<CrlvPropriedade>("proprio")
   const [uploadingKey, setUploadingKey] = useState<string | null>(null)
 
-  const crlvRows = useMemo(() => buildCrlvRows(vehicles), [vehicles])
+  const crlvRowsAll = useMemo(() => buildCrlvRows(vehicles), [vehicles])
+  const crlvProprios = useMemo(() => crlvRowsAll.filter((row) => row.propriedade === "proprio"), [crlvRowsAll])
+  const crlvAlugados = useMemo(() => crlvRowsAll.filter((row) => row.propriedade === "alugado"), [crlvRowsAll])
+  const crlvRows = crlvPropriedade === "alugado" ? crlvAlugados : crlvProprios
   const cnhRows = useMemo(() => buildCnhRows(colaboradores), [colaboradores])
   const termoRows = useMemo(() => buildTermoRows(colaboradores, vehicles), [colaboradores, vehicles])
+
+  const handleReanalisar = async () => {
+    try {
+      const falhas = await reanalisar(crlvRowsAll.filter((row) => row.arquivo).map((row) => row.key))
+      if (falhas === null) return
+      toast({
+        title: "Análise concluída",
+        description: falhas > 0 ? `${falhas} CRLV(s) não puderam ser analisados.` : "Todos os CRLVs foram analisados.",
+      })
+    } catch (error) {
+      toast({
+        title: "Erro na análise do CRLV",
+        description: error instanceof Error ? error.message : "Falha ao analisar os CRLVs.",
+        variant: "destructive",
+      })
+    }
+  }
 
   const handleUpload = async (row: DocumentoRow, file: File) => {
     const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
@@ -305,6 +418,7 @@ export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
 
     return rows
       .filter((row) => (somentePendentes ? !row.arquivo : true))
+      .filter((row) => (somenteVencidos && row.tipo === "crlv" ? row.validade?.status === "vencido" : true))
       .filter((row) => (term ? normalize(`${row.titulo} ${row.subtitulo} ${row.detalhe}`).includes(term) : true))
       .sort((left, right) => left.titulo.localeCompare(right.titulo, "pt-BR"))
   }
@@ -316,11 +430,12 @@ export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
       icon: FileText,
       colunaTitulo: "Veículo",
       descricao:
-        "CRLV anexado na ficha do veículo (arquivos com \"CRLV\" no nome, em Imagens ou Checklists).",
+        "CRLV dos veículos da frota (sem agregados). O PDF é lido automaticamente e a validade é calculada pelo exercício, final da placa e calendário de licenciamento do Detran da UF (SP, MG ou PR).",
       rows: applyFilters(crlvRows),
-      vazio: "Nenhum veículo encontrado.",
+      vazio:
+        crlvPropriedade === "alugado" ? "Nenhum veículo alugado encontrado." : "Nenhum veículo próprio encontrado.",
       total: crlvRows.length,
-      pendentes: crlvRows.filter((row) => !row.arquivo).length,
+      pendentes: crlvRowsAll.filter((row) => !row.arquivo).length,
     },
     {
       value: "cnh",
@@ -380,6 +495,71 @@ export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
                 <CardDescription>{tab.descricao}</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap items-center gap-3 p-5 pt-0">
+                {tab.value === "crlv" ? (
+                  <div className="flex w-full flex-wrap items-center gap-2">
+                    {(
+                      [
+                        { value: "proprio", label: "Próprios", rows: crlvProprios },
+                        { value: "alugado", label: "Alugados", rows: crlvAlugados },
+                      ] as const
+                    ).map((option) => {
+                      const pendentes = option.rows.filter((row) => !row.arquivo).length
+                      const vencidos = option.rows.filter((row) => row.validade?.status === "vencido").length
+                      const active = crlvPropriedade === option.value
+                      return (
+                        <Button
+                          key={option.value}
+                          type="button"
+                          variant={active ? "default" : "outline"}
+                          className={
+                            active
+                              ? "min-w-[140px] border-[#d97706] bg-[#d97706] text-white hover:bg-[#b45309]"
+                              : "min-w-[140px] bg-white"
+                          }
+                          onClick={() => setCrlvPropriedade(option.value)}
+                        >
+                          {option.label}
+                          <Badge
+                            variant="outline"
+                            className={`ml-2 px-1.5 py-0 text-[0.68rem] font-semibold ${
+                              active ? "border-white/40 bg-white/20 text-white" : "border-border bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            {option.rows.length}
+                            {pendentes > 0 ? ` • ${pendentes} pend.` : ""}
+                          </Badge>
+                          {vencidos > 0 ? (
+                            <Badge
+                              variant="outline"
+                              className="ml-1 border-red-200 bg-red-50 px-1.5 py-0 text-[0.68rem] font-semibold text-red-700"
+                            >
+                              {vencidos} vencido(s)
+                            </Badge>
+                          ) : null}
+                        </Button>
+                      )
+                    })}
+
+                    {canManage ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="ml-auto bg-white"
+                        disabled={analisando}
+                        onClick={() => void handleReanalisar()}
+                        title="Lê novamente todos os PDFs de CRLV e recalcula a validade"
+                      >
+                        {analisando ? (
+                          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="mr-1.5 h-4 w-4" />
+                        )}
+                        {analisando ? "Analisando CRLVs..." : "Reanalisar CRLVs"}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="relative w-full max-w-sm">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -398,6 +578,17 @@ export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
                   Somente pendentes
                 </Button>
 
+                {tab.value === "crlv" ? (
+                  <Button
+                    type="button"
+                    variant={somenteVencidos ? "destructive" : "outline"}
+                    onClick={() => setSomenteVencidos((current) => !current)}
+                  >
+                    <AlertTriangle className="mr-1.5 h-4 w-4" />
+                    Somente vencidos
+                  </Button>
+                ) : null}
+
                 <p className="text-xs text-muted-foreground">
                   {tab.rows.length} de {tab.total} registro(s).
                 </p>
@@ -411,6 +602,8 @@ export function DocumentosPanel({ canManage = true }: DocumentosPanelProps) {
               canManage={canManage}
               uploadingKey={uploadingKey}
               onUpload={handleUpload}
+              mostrarValidade={tab.value === "crlv"}
+              analisando={analisando}
             />
           </TabsContent>
         ))}

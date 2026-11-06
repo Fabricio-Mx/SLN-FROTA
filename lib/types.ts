@@ -81,6 +81,15 @@ export interface Colaborador {
   updatedAt: string
 }
 
+export interface CrlvAnalise {
+  exercicio: number | null
+  uf: string | null
+  placa: string | null
+  emitidoEm: string | null
+  analisadoEm: string
+  erro?: string | null
+}
+
 export interface DriveFile {
   id: string
   name: string
@@ -88,6 +97,7 @@ export interface DriveFile {
   webContentLink?: string | null
   mimeType?: string | null
   size?: string | null
+  crlvAnalise?: CrlvAnalise | null
 }
 
 export type ColaboradorFormData = Omit<Colaborador, 'id' | 'createdAt' | 'updatedAt'>
